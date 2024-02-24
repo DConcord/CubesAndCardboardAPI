@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Backend API for Managing Game Knight events
+Parameters:
+  # CORS
+  CorsOrigin:
+    Type: String
+    Default: "'localhost:8080'"
+    Description: CORS Origin
+
+Resources:
+  EventsApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: Basic AWS Api Gateway
+      StageName: v1
+      # Cognito pool auth
+      Auth:
+        DefaultAuthorizer: CognitoPasswordless
+        Authorizers:
+          CognitoPasswordless:
+            UserPoolArn: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
+      # Cors: "'*'"
+      Cors: !Ref CorsOrigin
+      EndpointConfiguration:
+        Type: EDGE
+      Tags:
+        Owner: EventsAPI
+      # DefinitionBody:
+      #   "Fn::Transform":
+      #     Name: "AWS::Include"
+      #     Parameters:
+      #       Location: s3://cp-sam-deploy-east1/swagger.yaml
+
+  EventsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: game_events
+      PrimaryKey: date
+      # PointInTimeRecoverySpecification: PointInTimeRecoverySpecification
+      ProvisionedThroughput: PAY_PER_REQUEST
+      Tags:
+        Owner: EventsAPI
+        AppType: Serverless
+
+  ManageEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: manage_events/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Events:
+        EventHelloGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /hello
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventHelloOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /hello
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+      Tags:
+        Owner: EventsAPI
+
+Outputs:
+  EventsApiGateway:
+    Description: "API Gateway endpoint URL for Staging stage for Hello World function"
+    Value: !Sub "https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Staging/hello/"
+  EventsApiGatewayRestApiId:
+    Description: "API Gateway ARN for Basic AWS API Gateway"
+    Value: !Ref EventsApiGateway
+    Export:
+      Name: EventsApiGateway-RestApiId
+  EventsApiGatewayRootResourceId:
+    Value: !GetAtt EventsApiGateway.RootResourceId
+    Export:
+      Name: EventsApiGateway-RootResourceId

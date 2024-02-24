@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'basic-aws-apigateway-demo Sample SAM Template for basic-aws-apigateway-demo
+
+  '
+Parameters:
+  CorsOrigin:
+    Type: String
+    Default: '''localhost:8080'''
+    Description: CORS Origin
+Resources:
+  BasicAWSApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: Basic AWS Api Gateway
+      StageName: v1
+      Auth:
+        DefaultAuthorizer: CognitoPasswordless
+        Authorizers:
+          CognitoPasswordless:
+            UserPoolArn: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
+      Cors: '''*'''
+      EndpointConfiguration:
+        Type: EDGE
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+            Location: s3://cp-sam-deploy-east1/swagger.yaml
+    Metadata:
+      SamResourceId: BasicAWSApiGateway
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: s3://cp-sam-deploy-east1/265c48aa4a0e9396f54601c4fb465e00
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Events:
+        HelloWorldApi:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: BasicAWSApiGateway
+            Path: /hello
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        CORSApi:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: BasicAWSApiGateway
+            Path: /hello
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+    Metadata:
+      SamResourceId: HelloWorldFunction
+Outputs:
+  BasicAWSApiGateway:
+    Description: API Gateway endpoint URL for Staging stage for Hello World function
+    Value:
+      Fn::Sub: https://${BasicAWSApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Staging/hello/
+  BasicAWSApiGatewayRestApiId:
+    Description: API Gateway ARN for Basic AWS API Gateway
+    Value:
+      Ref: BasicAWSApiGateway
+    Export:
+      Name: BasicAWSApiGateway-RestApiId
+  BasicAWSApiGatewayRootResourceId:
+    Value:
+      Fn::GetAtt:
+      - BasicAWSApiGateway
+      - RootResourceId
+    Export:
+      Name: BasicAWSApiGateway-RootResourceId
