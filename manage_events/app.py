@@ -4,7 +4,7 @@ from boto3.dynamodb.conditions import Key
 import dateutil.parser as parser
 from datetime import datetime #, timedelta
 import uuid
-
+import botocore
 
 TABLE_NAME = 'game_events'
 ALLOWED_ORIGINS = [
@@ -12,6 +12,7 @@ ALLOWED_ORIGINS = [
   "https://localhost:8080",
   "https://myapp.dissonantconcord.com",
 ]
+S3_BUCKET = 'cdkstack-bucket83908e77-7tr0zgs93uwh'
 
 def ddb_default(obj):
     if isinstance(obj, set):
@@ -21,6 +22,32 @@ def ddb_default(obj):
     else:
         print(type(obj))
     raise TypeError
+
+def key_exists(bucket, key):
+    s3 = boto3.client("s3")
+    try:
+        s3.head_object(Bucket=bucket, Key=key)
+        print(f"Key: '{key}' found!")
+    except botocore.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            print(f"Key: '{key}' does not exist!")
+        else:
+            print("Something else went wrong")
+            raise
+
+def process_bgg_id(bgg_id):
+    s3 = boto3.client("s3")
+    key = f"{bgg_id}.png"
+    if not key_exists(S3_BUCKET, key):
+       # send message to sqs
+       print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
+       sqs = boto3.client("sqs")
+       queue_url = "https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue" #sqs.get_queue_url(QueueName="bgg_picture_sqs_queue")["QueueUrl"]
+       sqs.send_message(QueueUrl=queue_url, MessageBody=f'{bgg_id}#{S3_BUCKET}')
+       print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
+
+    # s3.download_file(S3_BUCKET, key, f"/tmp/{bgg_id}.png")
+    # return f"/tmp/{bgg_id}.png"        
 
 def lambda_handler(event, context):
 
@@ -80,8 +107,10 @@ def lambda_handler(event, context):
             "registered": {"SS": data['registered'] if data['host'] in data['registered'] else data['registered'].append(data['host'])},
             "player_pool": {"SS": player_pool} # temp
           }
-          if 'bgg_id' in data: new_event["bgg_id"]=  {"N": str(data['bgg_id'])}
+          if 'bgg_id' in data: new_event["bgg_id"] = {"N": str(data['bgg_id'])}
           if 'total_spots' in data:  new_event["total_spots"] = {"N": str(data['total_spots'])}
+
+          process_bgg_id(data["bgg_id"])
 
           # date = parser.parse(text).date().isoformat()
           ddb = boto3.client('dynamodb', region_name='us-east-1')
@@ -91,6 +120,7 @@ def lambda_handler(event, context):
             # Fail if item.event_id already exists
             ConditionExpression='attribute_not_exists(event_id)',
           )
+          print("Event Created")
           return {
             "statusCode": 201,
             'headers': {
@@ -119,6 +149,8 @@ def lambda_handler(event, context):
           if 'bgg_id' in data: modified_event["bgg_id"] = {"N": str(data['bgg_id'])}
           if 'total_spots' in data: modified_event["total_spots"] = {"N": str(data['total_spots'])}
 
+          process_bgg_id(data["bgg_id"])
+
           # date = parser.parse(text).date().isoformat()
           ddb = boto3.client('dynamodb', region_name='us-east-1')
           response = ddb.put_item(
@@ -127,6 +159,7 @@ def lambda_handler(event, context):
             # Fail if item.event_id already exists
             ConditionExpression='attribute_exists(event_id)',
           )
+          print("Event Updated")
           return {
             "statusCode": 201,
             'headers': {

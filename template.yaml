@@ -78,6 +78,7 @@ Resources:
       CodeUri: manage_events/
       Handler: app.lambda_handler
       Runtime: python3.12
+      Timeout: 30
       Events:
 
         # /events
@@ -163,7 +164,32 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref EventsTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt BggPictureSqsQueue.QueueName
+        - S3ReadPolicy:
+            BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
             
+  RetrieveBGGImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: bgg_picture/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BggPictureSqsQueue.Arn
+            BatchSize: 10
+      Policies:
+        - S3CrudPolicy:
+            BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
+            
+  BggPictureSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: bgg_picture_sqs_queue
 
 Outputs:
   EventsApiGateway:

@@ -16,9 +16,14 @@ sam package --template-file template.yaml --output-template-file output.yaml --s
 
 <!-- sam deploy --template-file output.yaml --stack-name GameKnightsEventsAPI --capabilities CAPABILITY_IAM --region us-east-1 -->
 
-```
+<!-- ```
+sam build
+
 sam deploy --template-file template.yaml --stack-name GameKnightsEventsAPI --capabilities CAPABILITY_IAM --region us-east-1 --s3-bucket cp-sam-deploy-east1 \
 --confirm-changeset
 
 sam delete --stack-name GameKnightsEventsAPI --region us-east-1
-```
+``` -->
+
+sam build && \
+sam deploy

@@ -29,43 +29,7 @@ Resources:
         Fn::Transform:
           Name: AWS::Include
           Parameters:
-            Location: s3://cp-sam-deploy-east1/23cb710b406d0755d9583490c407bf9b
-      Models:
-        NewEvent:
-          required:
-          - event_type
-          - date
-          - format
-          - game
-          - host
-          - registered
-          type: object
-          properties:
-            event_type:
-              type: string
-            date:
-              type: string
-              format: date
-            host:
-              type: string
-            format:
-              type: string
-              format: reserved|open
-            game:
-              type: string
-            bgg_id:
-              type: integer
-              description: BoardGameGeek.com Game ID
-            total_spots:
-              minimum: 0
-              type: integer
-            registered:
-              type: array
-              items:
-                type: string
-            player_pool:
-              items:
-                type: string
+            Location: s3://cp-sam-deploy-east1/3de7325c7042d76ef18b9d1419c39321
     Metadata:
       SamResourceId: EventsApiGateway
   EventsTable:
@@ -102,10 +66,29 @@ Resources:
   ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: s3://cp-sam-deploy-east1/237c2e2d5a84bae4b18cc1cd53c58750
+      CodeUri: s3://cp-sam-deploy-east1/407d899f1914e15705900e3ed3d8d1a6
       Handler: app.lambda_handler
       Runtime: python3.12
+      Timeout: 30
       Events:
+        GetEvents:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /events
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventsOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /events
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
         GetEvent:
           Type: Api
           Properties:
@@ -124,11 +107,24 @@ Resources:
             Method: POST
             Auth:
               Authorizer: CognitoPasswordless
-            RequestModel:
-              Model: NewEvent
-              Required: true
-              ValidateBody: false
-              ValidateParameters: true
+        DeleteEvent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: DELETE
+            Auth:
+              Authorizer: CognitoPasswordless
+        UpdateEvent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
         EventOptions:
           Type: Api
           Properties:
@@ -163,8 +159,42 @@ Resources:
       - DynamoDBCrudPolicy:
           TableName:
             Ref: EventsTable
+      - SQSSendMessagePolicy:
+          QueueName:
+            Fn::GetAtt:
+            - BggPictureSqsQueue
+            - QueueName
+      - S3ReadPolicy:
+          BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
     Metadata:
       SamResourceId: ManageEventsFunction
+  RetrieveBGGImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: s3://cp-sam-deploy-east1/d3b610f16044481eced129ac5eb502fa
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - BggPictureSqsQueue
+              - Arn
+            BatchSize: 10
+      Policies:
+      - S3CrudPolicy:
+          BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
+    Metadata:
+      SamResourceId: RetrieveBGGImageFunction
+  BggPictureSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: bgg_picture_sqs_queue
+    Metadata:
+      SamResourceId: BggPictureSqsQueue
 Outputs:
   EventsApiGateway:
     Description: API Gateway endpoint URL for Staging stage for Game Knights Events
