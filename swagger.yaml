@@ -180,7 +180,7 @@ paths:
           application/json:
             schema:
               required:
-                # - event_type
+                - event_type
                 - date
                 - format
                 - game
@@ -277,6 +277,71 @@ paths:
           description: Event Deleted
         "400":
           description: bad input parameter
+        "409":
+          description: event doesn't already exist
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    put:
+      tags:
+        - events
+      summary: Update event
+      description: Update event
+      operationId: updateEvent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - event_id
+                - event_type
+                - date
+                - format
+                - game
+                - host
+                - registered
+              type: object
+              properties:
+                event_id:
+                  type: string
+                  format: uuid
+                event_type:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                host:
+                  type: string
+                format:
+                  type: string
+                  format: reserved|open
+                game:
+                  type: string
+                bgg_id:
+                  type: integer
+                  description: BoardGameGeek.com Game ID
+                total_spots:
+                  minimum: 0
+                  type: integer
+                registered:
+                  type: array
+                  items:
+                    type: string
+                player_pool:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: event updated
+        "400":
+          description: "invalid input, object invalid"
       x-amazon-apigateway-integration:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"

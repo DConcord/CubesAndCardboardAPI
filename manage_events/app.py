@@ -101,8 +101,42 @@ def lambda_handler(event, context):
               "new_event": new_event,
             }, indent=4)
           }
+        
+        # Modify Event
         case 'PUT':
-          pass
+          data = json.loads(event["body"])
+                
+          modified_event = {
+            "event_id": {"S": data['event_id']},
+            "event_type": {"S": data['event_type']},
+            "date": {"S": data['date']},
+            "host": {"S": data['host']},
+            "format": {"S": data['format']},
+            "game": {"S": data['game']},
+            "registered": {"SS": data['registered']},
+            "player_pool": {"SS": data['player_pool']},
+          }
+          if 'bgg_id' in data: modified_event["bgg_id"] = {"N": str(data['bgg_id'])}
+          if 'total_spots' in data: modified_event["total_spots"] = {"N": str(data['total_spots'])}
+
+          # date = parser.parse(text).date().isoformat()
+          ddb = boto3.client('dynamodb', region_name='us-east-1')
+          response = ddb.put_item(
+            TableName=TABLE_NAME,
+            Item={**modified_event},
+            # Fail if item.event_id already exists
+            ConditionExpression='attribute_exists(event_id)',
+          )
+          return {
+            "statusCode": 201,
+            'headers': {
+              "Access-Control-Allow-Origin": "*"
+            },
+            "body": json.dumps({
+              "result": "success",
+              "modified_event": modified_event,
+            }, indent=4)
+          }
          
         # Delete Event
         case 'DELETE':

@@ -79,6 +79,8 @@ Resources:
       Handler: app.lambda_handler
       Runtime: python3.12
       Events:
+
+        # /events
         GetEvents:
           Type: Api
           Properties:
@@ -95,6 +97,8 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+
+        # /event
         GetEvent:
           Type: Api
           Properties:
@@ -119,6 +123,14 @@ Resources:
             Method: DELETE
             Auth:
               Authorizer: CognitoPasswordless
+        UpdateEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
         EventOptions:
           Type: Api
           Properties:
@@ -127,6 +139,8 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+
+        # /event/rsvp
         GetEventRSVP:
           Type: Api
           Properties:
