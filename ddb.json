@@ -1,0 +1,163 @@
+{
+    "Items": [
+        {
+            "event_type": "GameKnight",
+            "date": "2024-02-29",
+            "host": "Garrett",
+            "event_id": "28d0fd0f-be25-43c3-8d0e-6205ec6a48ab",
+            "registered": [
+                "Robert",
+                "Garrett"
+            ],
+            "player_pool": [
+                "Kevin",
+                "Scott",
+                "Jake",
+                "Steve",
+                "Frank",
+                "Luke",
+                "Garrett",
+                "Colten",
+                "Robert",
+                "Tim",
+                "Wynn",
+                "Brett",
+                "Agustin",
+                "Eric"
+            ],
+            "game": "TBD",
+            "format": "Open"
+        },
+        {
+            "event_type": "GameKnight",
+            "date": "2024-02-29",
+            "host": "Garrett",
+            "event_id": "813f93a8-466f-4778-9369-ab0df991bc7c",
+            "registered": [
+                "Robert",
+                "Garrett"
+            ],
+            "player_pool": [
+                "Kevin",
+                "Scott",
+                "Jake",
+                "Steve",
+                "Frank",
+                "Luke",
+                "Garrett",
+                "Colten",
+                "Robert",
+                "Tim",
+                "Wynn",
+                "Brett",
+                "Agustin",
+                "Eric"
+            ],
+            "game": "TBD",
+            "format": "Open"
+        },
+        {
+            "total_spots": 5,
+            "event_type": "GameKnight",
+            "date": "2024-03-14",
+            "bgg_id": 47,
+            "host": "Luke",
+            "event_id": "e012ab99-1978-4a89-a6c5-874431b488f8",
+            "registered": [
+                "Luke"
+            ],
+            "player_pool": [
+                "Kevin",
+                "Scott",
+                "Jake",
+                "Steve",
+                "Frank",
+                "Luke",
+                "Garrett",
+                "Colten",
+                "Robert",
+                "Tim",
+                "Wynn",
+                "Brett",
+                "Agustin",
+                "Eric"
+            ],
+            "game": "Chinatown",
+            "format": "Reserved"
+        },
+        {
+            "event_type": "GameKnight",
+            "date": "2024-03-28",
+            "host": "Garrett",
+            "event_id": "79abae75-fa45-4a0b-9743-88cb88ac62f2",
+            "registered": [
+                "Colten",
+                "Garrett"
+            ],
+            "player_pool": [
+                "Kevin",
+                "Scott",
+                "Jake",
+                "Steve",
+                "Frank",
+                "Luke",
+                "Garrett",
+                "Colten",
+                "Robert",
+                "Tim",
+                "Wynn",
+                "Brett",
+                "Agustin",
+                "Eric"
+            ],
+            "game": "TBD",
+            "format": "Open"
+        },
+        {
+            "total_spots": 6,
+            "event_type": "GameKnight",
+            "date": "2024-04-11",
+            "bgg_id": 182134,
+            "host": "Luke",
+            "event_id": "11eaac98-f388-4794-a1c8-dc5fd3a72305",
+            "registered": [
+                "Steve",
+                "Luke"
+            ],
+            "player_pool": [
+                "Kevin",
+                "Scott",
+                "Jake",
+                "Steve",
+                "Frank",
+                "Luke",
+                "Garrett",
+                "Colten",
+                "Robert",
+                "Tim",
+                "Wynn",
+                "Brett",
+                "Agustin",
+                "Eric"
+            ],
+            "game": "Evolution Climate",
+            "format": "Reserved"
+        }
+    ],
+    "Count": 5,
+    "ScannedCount": 5,
+    "ResponseMetadata": {
+        "RequestId": "DKA6IHEAFV503FUIBNHBPLO3LFVV4KQNSO5AEMVJF66Q9ASUAAJG",
+        "HTTPStatusCode": 200,
+        "HTTPHeaders": {
+            "server": "Server",
+            "date": "Tue, 27 Feb 2024 03:21:19 GMT",
+            "content-type": "application/x-amz-json-1.0",
+            "content-length": "1916",
+            "connection": "keep-alive",
+            "x-amzn-requestid": "DKA6IHEAFV503FUIBNHBPLO3LFVV4KQNSO5AEMVJF66Q9ASUAAJG",
+            "x-amz-crc32": "1296252799"
+        },
+        "RetryAttempts": 0
+    }
+}

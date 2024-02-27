@@ -1,21 +1,360 @@
-swagger: '2.0'
+openapi: 3.0.0
 info:
-  description: 'This is a sample API for rating movies.'
-  version: '1.0.0'
-  title: AutoGate Admin Service Management Gateway
+  title: Game Knight Events
+  description: Game Knight Events API
+  version: "1.1"
 
+x-amazon-apigateway-request-validators:
+  full:
+    validateRequestBody: true
+    validateRequestParameters: true
+    validateRequestHeaders: true
+  body-headers:
+    validateRequestBody: true
+    validateRequestParameters: false
+    validateRequestHeaders: true
+  params-headers:
+    validateRequestBody: false
+    validateRequestParameters: true
+    validateRequestHeaders: true
+x-amazon-apigateway-gateway-responses:
+  DEFAULT_4XX:
+    responseParameters:
+      gatewayresponse.header.Access-Control-Allow-Methods: "'*'"
+      gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+      gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+  DEFAULT_5XX:
+    responseParameters:
+      gatewayresponse.header.Access-Control-Allow-Methods: "'*'"
+      gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+      gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
 paths:
-  /hello:
+  /events:
     get:
+      tags:
+        - events
+      summary: list events
+      description: |
+        List game knight events. Lists only future events by default. Optionally, filter by date or hosts, or games
+      operationId: getEvents
+      # parameters:
+      #   - name: includePast
+      #     in: query
+      #     description: Include past events
+      #     required: false
+      #     style: form
+      #     explode: true
+      #     schema:
+      #       type: boolean
+      #   - name: hostName
+      #     in: query
+      #     description: Filter by host names
+      #     required: false
+      #     style: form
+      #     explode: true
+      #     schema:
+      #       type: array
+      #       items:
+      #         type: string
+      #   - name: hostUserId
+      #     in: query
+      #     description: Filter by host user_ids
+      #     required: false
+      #     style: form
+      #     explode: true
+      #     schema:
+      #       type: array
+      #       items:
+      #         type: string
+      #   - name: games
+      #     in: query
+      #     description: Filter by games
+      #     required: false
+      #     style: form
+      #     explode: true
+      #     schema:
+      #       type: array
+      #       items:
+      #         type: string
       responses:
-        200:
-          description: 200 response
+        "200":
+          description: list all events
+          # content:
+          #   application/json:
+          #     schema:
+          #       type: array
+          #       items:
+          #         $ref: "#/components/schemas/Event"
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+
+  /event:
+    get:
+      tags:
+        - events
+      summary: Get event
+      x-amazon-apigateway-request-validator: params-headers
+      operationId: getEvent
+      parameters:
+        - name: event_id
+          in: query
+          description: Get event info
+          required: true
+          style: form
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Get event info
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+          # content:
+          #   application/json:
+          #     schema:
+          #       $ref: "#/definitions/Event"
+        "400":
+          description: bad input parameter
           headers:
             Access-Control-Allow-Origin:
               type: string
       x-amazon-apigateway-integration:
         uri:
-          Fn::Sub: 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HelloWorldFunction.Arn}/invocations'
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        responses:
+          default:
+            statusCode: 200
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+
+    post:
+      tags:
+        - events
+      summary: Create event
+      x-amazon-apigateway-request-validator: body-headers
+      description: Create event
+      operationId: createEvent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                # - event_type
+                - date
+                - format
+                - game
+                - host
+                - registered
+              type: object
+              properties:
+                event_id: # Ignored if supplied for new event (generated in lambda)
+                  type: string
+                  format: uuid
+                event_type:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                host:
+                  type: string
+                format:
+                  type: string
+                  format: reserved|open
+                game:
+                  type: string
+                bgg_id:
+                  type: integer
+                  description: BoardGameGeek.com Game ID
+                total_spots:
+                  minimum: 0
+                  type: integer
+                registered:
+                  type: array
+                  items:
+                    type: string
+                player_pool:
+                  type: array
+                  items:
+                    type: string
+              # $ref: '#/components/schemas/NewEvent'
+      # requestBody:
+      #   description: The login user body details.
+      #   content:
+      #     application/json:
+      #       schema:
+      #         $ref: '#/components/schemas/LoginUser'
+      #   required: true
+      # requestBody:
+      #   content:
+      #     application/json:
+      #       schema:
+      #         $ref: "#/definitions/Event"
+      #   required: true
+      responses:
+        "201":
+          description: event created
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+        "400":
+          description: "invalid input, object invalid"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+        "409":
+          description: an existing event already exists
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        responses:
+          default:
+            statusCode: 201
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+    delete:
+      tags:
+        - events
+      summary: Delete event
+      operationId: deleteEvent
+      x-amazon-apigateway-request-validator: params-headers
+      parameters:
+        - name: event_id
+          in: query
+          description: Delete event
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Event Deleted
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+  /event/rsvp:
+    get:
+      tags:
+        - events
+      summary: Add RSVP
+      description: Add RSVP
+      operationId: updateRsvp
+      parameters:
+        - name: date
+          in: query
+          description: Event date mm/dd/yyyy
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: string
+        - name: name
+          in: query
+          description: Player name
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Get event info
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+          # content:
+          #   application/json:
+          #     schema:
+          #       $ref: "#/definitions/Event"
+        # "201":
+        #   description: RSVP added
+        "400":
+          description: "invalid input, object invalid"
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
         responses:
           default:
             statusCode: 200
@@ -30,10 +369,10 @@ paths:
       produces:
         - application/json
       responses:
-        200:
-          description: '200 response'
+        "200":
+          description: "200 response"
           schema:
-            $ref: '#/definitions/Empty'
+            $ref: "#/definitions/Empty"
           headers:
             Access-Control-Allow-Origin:
               type: string
@@ -46,7 +385,7 @@ paths:
       x-amazon-apigateway-integration:
         responses:
           default:
-            statusCode: 200
+            statusCode: "200"
             responseParameters:
               method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
               method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
@@ -56,6 +395,67 @@ paths:
         passthroughBehavior: when_no_match
         type: mock
 
+  # x-amazon-apigateway-integration:
+  #   passthroughBehavior: when_no_match
+  #   httpMethod: POST
+  #   uri:
+  #     Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+  #   responses:
+  #     default:
+  #       statusCode: "200"
+  #       responseParameters:
+  #         method.response.header.Access-Control-Allow-Origin: "'*'"
+  #   type: aws
+  #   parameters:
+  #     date: $input.params('date')
+  #     name: $input.params('name')
+  #   requestTemplates:
+  #     application/json: |-
+  #       {
+  #         "date" : "$input.params('date')",
+  #         "name" : "$input.params('name')"
+  #       }
+
+components:
+  schemas:
+    NewEvent:
+      required:
+        - event_type
+        - date
+        - format
+        - game
+        - host
+        - registered
+      type: object
+      properties:
+        event_id: # Ignored if supplied for new event (generated in lambda)
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        date:
+          type: string
+          format: date
+        host:
+          type: string
+        format:
+          type: string
+          format: reserved|open
+        game:
+          type: string
+        bgg_id:
+          type: integer
+          description: BoardGameGeek.com Game ID
+        total_spots:
+          minimum: 0
+          type: integer
+        registered:
+          type: array
+          items:
+            type: string
+        player_pool:
+          items:
+            type: string
 definitions:
   Empty:
     type: object

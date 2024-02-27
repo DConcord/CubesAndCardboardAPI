@@ -1,19 +1,20 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'basic-aws-apigateway-demo Sample SAM Template for basic-aws-apigateway-demo
+Description: 'Backend API for Managing Game Knight events
 
   '
 Parameters:
-  CorsOrigin:
+  Stage:
     Type: String
-    Default: '''localhost:8080'''
-    Description: CORS Origin
+    Default: Staging
+    Description: API Stage
 Resources:
-  BasicAWSApiGateway:
+  EventsApiGateway:
     Type: AWS::Serverless::Api
     Properties:
-      Name: Basic AWS Api Gateway
-      StageName: v1
+      Name: Game Knights Events API
+      StageName:
+        Ref: Stage
       Auth:
         DefaultAuthorizer: CognitoPasswordless
         Authorizers:
@@ -22,55 +23,164 @@ Resources:
       Cors: '''*'''
       EndpointConfiguration:
         Type: EDGE
+      Tags:
+        Owner: EventsAPI
       DefinitionBody:
         Fn::Transform:
           Name: AWS::Include
           Parameters:
-            Location: s3://cp-sam-deploy-east1/swagger.yaml
+            Location: s3://cp-sam-deploy-east1/23cb710b406d0755d9583490c407bf9b
+      Models:
+        NewEvent:
+          required:
+          - event_type
+          - date
+          - format
+          - game
+          - host
+          - registered
+          type: object
+          properties:
+            event_type:
+              type: string
+            date:
+              type: string
+              format: date
+            host:
+              type: string
+            format:
+              type: string
+              format: reserved|open
+            game:
+              type: string
+            bgg_id:
+              type: integer
+              description: BoardGameGeek.com Game ID
+            total_spots:
+              minimum: 0
+              type: integer
+            registered:
+              type: array
+              items:
+                type: string
+            player_pool:
+              items:
+                type: string
     Metadata:
-      SamResourceId: BasicAWSApiGateway
-  HelloWorldFunction:
+      SamResourceId: EventsApiGateway
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: game_events
+      AttributeDefinitions:
+      - AttributeName: event_id
+        AttributeType: S
+      - AttributeName: event_type
+        AttributeType: S
+      - AttributeName: date
+        AttributeType: S
+      KeySchema:
+      - AttributeName: event_id
+        KeyType: HASH
+      GlobalSecondaryIndexes:
+      - IndexName: EventTypeByDate
+        KeySchema:
+        - AttributeName: event_type
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+      - Key: Name
+        Value: game_events
+      - Key: Owner
+        Value: EventsAPI
+    Metadata:
+      SamResourceId: EventsTable
+  ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: s3://cp-sam-deploy-east1/265c48aa4a0e9396f54601c4fb465e00
+      CodeUri: s3://cp-sam-deploy-east1/237c2e2d5a84bae4b18cc1cd53c58750
       Handler: app.lambda_handler
       Runtime: python3.12
       Events:
-        HelloWorldApi:
+        GetEvent:
           Type: Api
           Properties:
             RestApiId:
-              Ref: BasicAWSApiGateway
-            Path: /hello
+              Ref: EventsApiGateway
+            Path: /event
             Method: GET
             Auth:
               Authorizer: CognitoPasswordless
-        CORSApi:
+        CreateEvent:
           Type: Api
           Properties:
             RestApiId:
-              Ref: BasicAWSApiGateway
-            Path: /hello
+              Ref: EventsApiGateway
+            Path: /event
+            Method: POST
+            Auth:
+              Authorizer: CognitoPasswordless
+            RequestModel:
+              Model: NewEvent
+              Required: true
+              ValidateBody: false
+              ValidateParameters: true
+        EventOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+        GetEventRSVP:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event/rsvp
+            Method: GET
+            RequestParameters: null
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventRsvpOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event/rsvp
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+      Tags:
+        Owner: EventsAPI
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: EventsTable
     Metadata:
-      SamResourceId: HelloWorldFunction
+      SamResourceId: ManageEventsFunction
 Outputs:
-  BasicAWSApiGateway:
-    Description: API Gateway endpoint URL for Staging stage for Hello World function
+  EventsApiGateway:
+    Description: API Gateway endpoint URL for Staging stage for Game Knights Events
+      function
     Value:
-      Fn::Sub: https://${BasicAWSApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Staging/hello/
-  BasicAWSApiGatewayRestApiId:
-    Description: API Gateway ARN for Basic AWS API Gateway
+      Fn::Sub: https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events/
+  EventsApiGatewayRestApiId:
+    Description: API Gateway ARN for Game Knights Events AWS API Gateway
     Value:
-      Ref: BasicAWSApiGateway
+      Ref: EventsApiGateway
     Export:
-      Name: BasicAWSApiGateway-RestApiId
-  BasicAWSApiGatewayRootResourceId:
+      Name: EventsApiGateway-RestApiId
+  EventsApiGatewayRootResourceId:
     Value:
       Fn::GetAtt:
-      - BasicAWSApiGateway
+      - EventsApiGateway
       - RootResourceId
     Export:
-      Name: BasicAWSApiGateway-RootResourceId
+      Name: EventsApiGateway-RootResourceId

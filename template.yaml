@@ -9,40 +9,68 @@ Parameters:
     Default: "'localhost:8080'"
     Description: CORS Origin
 
+Parameters:
+  Stage:
+    Type: String
+    Default: Staging
+    Description: API Stage
+
 Resources:
   EventsApiGateway:
     Type: AWS::Serverless::Api
     Properties:
-      Name: Basic AWS Api Gateway
-      StageName: v1
+      Name: Game Knights Events API
+      StageName: !Ref Stage
       # Cognito pool auth
       Auth:
         DefaultAuthorizer: CognitoPasswordless
         Authorizers:
           CognitoPasswordless:
             UserPoolArn: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
-      # Cors: "'*'"
-      Cors: !Ref CorsOrigin
+      Cors: "'*'"
+      # Cors: !Ref CorsOrigin
       EndpointConfiguration:
         Type: EDGE
       Tags:
         Owner: EventsAPI
-      # DefinitionBody:
-      #   "Fn::Transform":
-      #     Name: "AWS::Include"
-      #     Parameters:
-      #       Location: s3://cp-sam-deploy-east1/swagger.yaml
+      DefinitionBody:
+        "Fn::Transform":
+          Name: "AWS::Include"
+          Parameters:
+            Location: "swagger.yaml"
+            # Location: s3://cp-sam-deploy-east1/swagger.yaml
+      # Models:
 
   EventsTable:
-    Type: AWS::Serverless::SimpleTable
+    Type: AWS::DynamoDB::Table
     Properties:
       TableName: game_events
-      PrimaryKey: date
-      # PointInTimeRecoverySpecification: PointInTimeRecoverySpecification
-      ProvisionedThroughput: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: "event_id"
+          AttributeType: "S"
+        - AttributeName: "event_type"
+          AttributeType: "S"
+        - AttributeName: "date"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "event_id"
+          KeyType: "HASH"
+      GlobalSecondaryIndexes:
+        - IndexName: EventTypeByDate
+          KeySchema:
+            - AttributeName: "event_type"
+              KeyType: "HASH"
+            - AttributeName: "date"
+              KeyType: "RANGE"
+          Projection: 
+            ProjectionType: "ALL"
+      BillingMode: PAY_PER_REQUEST
       Tags:
-        Owner: EventsAPI
-        AppType: Serverless
+        - Key: Name
+          Value: game_events
+        - Key: Owner
+          Value: EventsAPI
+
 
   ManageEventsFunction:
     Type: AWS::Serverless::Function
@@ -51,31 +79,84 @@ Resources:
       Handler: app.lambda_handler
       Runtime: python3.12
       Events:
-        EventHelloGet:
+        GetEvents:
           Type: Api
           Properties:
             RestApiId: !Ref EventsApiGateway
-            Path: /hello
+            Path: /events
             Method: GET
             Auth:
               Authorizer: CognitoPasswordless
-        EventHelloOptions:
+        EventsOptions:
           Type: Api
           Properties:
             RestApiId: !Ref EventsApiGateway
-            Path: /hello
+            Path: /events
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        GetEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        CreateEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event
+            Method: POST
+            Auth:
+              Authorizer: CognitoPasswordless
+        DeleteEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event
+            Method: DELETE
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        GetEventRSVP:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event/rsvp
+            Method: GET
+            RequestParameters:
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventRsvpOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event/rsvp
             Method: OPTIONS
             Auth:
               Authorizer: NONE
       Tags:
         Owner: EventsAPI
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EventsTable
+            
 
 Outputs:
   EventsApiGateway:
-    Description: "API Gateway endpoint URL for Staging stage for Hello World function"
-    Value: !Sub "https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Staging/hello/"
+    Description: "API Gateway endpoint URL for Staging stage for Game Knights Events function"
+    Value: !Sub "https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events/"
   EventsApiGatewayRestApiId:
-    Description: "API Gateway ARN for Basic AWS API Gateway"
+    Description: "API Gateway ARN for Game Knights Events AWS API Gateway"
     Value: !Ref EventsApiGateway
     Export:
       Name: EventsApiGateway-RestApiId

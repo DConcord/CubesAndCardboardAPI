@@ -1,15 +1,182 @@
 import json
+import boto3
+from boto3.dynamodb.conditions import Key
+import dateutil.parser as parser
+from datetime import datetime #, timedelta
+import uuid
 
+
+TABLE_NAME = 'game_events'
+ALLOWED_ORIGINS = [
+  "http://localhost:8080",
+  "https://localhost:8080",
+  "https://myapp.dissonantconcord.com",
+]
+
+def ddb_default(obj):
+    if isinstance(obj, set):
+        return list(obj)
+    elif str(type(obj)) == "<class 'decimal.Decimal'>":
+        return int(obj)
+    else:
+        print(type(obj))
+    raise TypeError
 
 def lambda_handler(event, context):
 
-    return {
-        "statusCode": 200,
-        'headers': {
-            "Access-Control-Allow-Origin": "*"
-        },
-        "body": json.dumps(event, indent=4),
-        # "body": json.dumps({
-        #     "message": "hello world",
-        # }),
-    }
+  # try:
+  #   origin = event['headers']["Origin"]
+  #   print(origin)
+  # except :
+  #   print(json.dumps({"event": event}))
+  #   raise
+
+  # # if origin not in ALLOWED_ORIGINS:
+  # #   return {
+  # #     "statusCode": 403,
+  # #     'headers': {
+  # #       "Access-Control-Allow-Origin": "*"
+  # #     },
+  # #     "body": "Origin not allowed"
+  # #   }
+
+  method = event['requestContext']['httpMethod']
+  resource = event['resource']
+
+  match resource:
+    case '/event':
+      match method:
+        case 'GET':
+          pass
+
+        # Create Event
+        case 'POST':
+          data = json.loads(event["body"])
+
+          player_pool = [
+            "Luke",
+            "Eric",
+            "Colten",
+            "Frank",
+            "Wynn",
+            "Scott",
+            "Tim",
+            "Kevin",
+            "Agustin",
+            "Steve",
+            "Brett",
+            "Jake",
+            "Garrett",
+            "Robert",
+          ]
+                
+          new_event = {
+            "event_id": {"S": data['event_id'] if 'event_id' in data else str(uuid.uuid4())}, # temp: allow supplying event_id
+            "event_type": {"S": data['event_type'] if 'event_type' in data else "GameKnight"},
+            "date": {"S": data['date']},
+            "host": {"S": data['host']},
+            "format": {"S": data['format']},
+            "game": {"S": data['game']},
+            "registered": {"SS": data['registered'] if data['host'] in data['registered'] else data['registered'].append(data['host'])},
+            "player_pool": {"SS": player_pool} # temp
+          }
+          if 'bgg_id' in data: new_event["bgg_id"]=  {"N": str(data['bgg_id'])}
+          if 'total_spots' in data:  new_event["total_spots"] = {"N": str(data['total_spots'])}
+
+          # date = parser.parse(text).date().isoformat()
+          ddb = boto3.client('dynamodb', region_name='us-east-1')
+          response = ddb.put_item(
+            TableName=TABLE_NAME,
+            Item={**new_event},
+            # Fail if item.event_id already exists
+            ConditionExpression='attribute_not_exists(event_id)',
+          )
+          return {
+            "statusCode": 201,
+            'headers': {
+              "Access-Control-Allow-Origin": "*"
+            },
+            "body": json.dumps({
+              "result": "success",
+              "new_event": new_event,
+            }, indent=4)
+          }
+        case 'PUT':
+          pass
+         
+        # Delete Event
+        case 'DELETE':
+          event_id = event["queryStringParameters"]["event_id"]
+
+          ddb = boto3.resource('dynamodb', region_name='us-east-1')
+          table = ddb.Table(TABLE_NAME)
+          response = table.delete_item(
+            Key={ 'event_id': event_id },
+            ConditionExpression="attribute_exists (event_id)",
+          )
+          if response["ResponseMetadata"]["HTTPStatusCode"] == 200:
+            return {
+              "statusCode": 200,
+              'headers': {
+                "Access-Control-Allow-Origin": "*"
+              },
+              "body": json.dumps({
+                "result": "success; event deleted"}, default=ddb_default),
+            }
+
+    case '/events':
+      match method:
+         
+        #  Get Events
+        case 'GET':
+          current_date = datetime.now().date().isoformat()
+          # date = parser.parse(text).date().isoformat()
+          ddb = boto3.resource('dynamodb', region_name='us-east-1')
+          table = ddb.Table(TABLE_NAME)
+          response = table.query(
+            TableName=TABLE_NAME,
+            IndexName='EventTypeByDate',
+            Select='ALL_ATTRIBUTES',
+            KeyConditionExpression=(Key('event_type').eq('GameKnight') & Key('date').gte(current_date)),
+          )
+
+          if response["ResponseMetadata"]["HTTPStatusCode"] == 200:
+            return {
+              "statusCode": 200,
+              'headers': {
+                "Access-Control-Allow-Origin": "*"
+              },
+              "body": json.dumps(response["Items"], default=ddb_default),
+            }
+             
+                  
+
+
+  if method: return {
+    "statusCode": 200,
+    'headers': {
+      "Access-Control-Allow-Origin": "*"
+    },
+    "body": json.dumps(event, indent=4),
+  }
+
+  # table.put_item(
+  #   Item={
+  #     'id': 1,
+  #     'name': 'ABC',
+  #     'salary': 20000
+  #   },
+  # )
+
+
+
+
+  # match method:
+  #   case 'GET':
+  #     pass
+  #   case 'POST':
+  #     pass
+  #   case 'PUT':
+  #     pass
+  #   case 'DELETE':
+  #     pass
