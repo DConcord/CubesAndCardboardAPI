@@ -79,12 +79,6 @@ paths:
       responses:
         "200":
           description: list all events
-          # content:
-          #   application/json:
-          #     schema:
-          #       type: array
-          #       items:
-          #         $ref: "#/components/schemas/Event"
         "400":
           description: bad input parameter
       x-amazon-apigateway-integration:
@@ -198,6 +192,8 @@ paths:
                   format: date
                 host:
                   type: string
+                organizer:
+                  type: string
                 format:
                   type: string
                   format: reserved|open
@@ -213,24 +209,16 @@ paths:
                   type: array
                   items:
                     type: string
+                not_attending:
+                  type: array
+                  items:
+                    type: string
                 player_pool:
                   type: array
                   items:
                     type: string
-              # $ref: '#/components/schemas/NewEvent'
-      # requestBody:
-      #   description: The login user body details.
-      #   content:
-      #     application/json:
-      #       schema:
-      #         $ref: '#/components/schemas/LoginUser'
-      #   required: true
-      # requestBody:
-      #   content:
-      #     application/json:
-      #       schema:
-      #         $ref: "#/definitions/Event"
-      #   required: true
+                tbd_pic:
+                  type: string
       responses:
         "201":
           description: event created
@@ -294,6 +282,7 @@ paths:
       summary: Update event
       description: Update event
       operationId: updateEvent
+      x-amazon-apigateway-request-validator: body-headers
       requestBody:
         content:
           application/json:
@@ -318,6 +307,8 @@ paths:
                   format: date
                 host:
                   type: string
+                organizer:
+                  type: string
                 format:
                   type: string
                   format: reserved|open
@@ -333,10 +324,17 @@ paths:
                   type: array
                   items:
                     type: string
+                not_attending:
+                  type: array
+                  items:
+                    type: string
                 player_pool:
                   type: array
                   items:
                     type: string
+                tbd_pic:
+                  type: string
+
       responses:
         "201":
           description: event updated
@@ -386,6 +384,7 @@ paths:
       summary: Add RSVP
       description: Add RSVP
       operationId: updateRsvp
+      x-amazon-apigateway-request-validator: params-headers
       parameters:
         - name: date
           in: query
@@ -409,23 +408,75 @@ paths:
           headers:
             Access-Control-Allow-Origin:
               type: string
-          # content:
-          #   application/json:
-          #     schema:
-          #       $ref: "#/definitions/Event"
-        # "201":
-        #   description: RSVP added
         "400":
           description: "invalid input, object invalid"
       x-amazon-apigateway-integration:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
-        responses:
-          default:
-            statusCode: 200
-            responseParameters:
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+    put:
+      tags:
+        - events
+      summary: Add RSVP
+      description: Add RSVP for authenticated player
+      operationId: updateRsvp
+      x-amazon-apigateway-request-validator: body-headers
+      parameters:
+        - name: event_id
+          in: body
+          description: Event ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: name
+          in: body
+          description: Player name # id
+          required: true
+          schema:
+            type: string
+            # format: uuid
+      responses:
+        "201":
+          description: RSVP added
+        "400":
+          description: "invalid input, object invalid"
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+    delete:
+      tags:
+        - events
+      summary: Remove RSVP
+      description: Remove RSVP for authenticated player
+      operationId: deleteRsvp
+      x-amazon-apigateway-request-validator: params-headers
+      parameters:
+        - name: event_id
+          in: query
+          description: Event ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: name
+          in: query
+          description: Player name # id
+          required: true
+          schema:
+            type: string
+            # format: uuid
+      responses:
+        "201":
+          description: RSVP removed
+        "400":
+          description: "invalid input, object invalid"
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
         httpMethod: POST
         type: aws_proxy
     options:
@@ -460,26 +511,56 @@ paths:
         passthroughBehavior: when_no_match
         type: mock
 
-  # x-amazon-apigateway-integration:
-  #   passthroughBehavior: when_no_match
-  #   httpMethod: POST
-  #   uri:
-  #     Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
-  #   responses:
-  #     default:
-  #       statusCode: "200"
-  #       responseParameters:
-  #         method.response.header.Access-Control-Allow-Origin: "'*'"
-  #   type: aws
-  #   parameters:
-  #     date: $input.params('date')
-  #     name: $input.params('name')
-  #   requestTemplates:
-  #     application/json: |-
-  #       {
-  #         "date" : "$input.params('date')",
-  #         "name" : "$input.params('name')"
-  #       }
+  /players:
+    get:
+      tags:
+        - players
+      summary: List players
+      description: |
+        List game knights
+      operationId: listPlayers
+      responses:
+        "200":
+          description: list all players
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
 
 components:
   schemas:
@@ -503,6 +584,8 @@ components:
           format: date
         host:
           type: string
+        organizer:
+          type: string
         format:
           type: string
           format: reserved|open
@@ -518,9 +601,15 @@ components:
           type: array
           items:
             type: string
+        not_attending:
+          type: array
+          items:
+            type: string
         player_pool:
           items:
             type: string
+        tbd_pic:
+          type: string
 definitions:
   Empty:
     type: object

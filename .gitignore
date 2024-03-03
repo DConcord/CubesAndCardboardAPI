@@ -241,6 +241,8 @@ $RECYCLE.BIN/
 # Build folder
 
 */build/*
+.aws-sam
+.aws-sam/*
 
 # End of https://www.gitignore.io/api/osx,linux,python,windows,pycharm,visualstudiocode
 
@@ -256,3 +258,7 @@ basic-aws-apigateway-demo-app/node_modules
 # Dev Swagger
 test.yaml
 swagger *.yaml
+
+# pics
+bgg_picture/new
+bgg_picture/tmp

@@ -73,9 +73,9 @@ def lambda_handler(event, context):
         img = Image.open(f"/tmp/{bgg_id}_original.png")
         img_ratio = img.size[0]/img.size[1]
         if img_ratio < .95 or img_ratio > 1.05:
-            img = resize_with_padding(img, (400, 400))
+            img = resize_with_padding(img, (600, 600))
         else:
-            img.thumbnail((400, 400))
+            img.thumbnail((600, 600))
 
         print(img.size)
         print(img.format)
@@ -97,7 +97,29 @@ def lambda_handler(event, context):
         )
 
 if __name__ == "__main__":
-  # Localhost testing
-  lambda_handler(event={
-    "Records": [ {"body": "172#cdkstack-bucket83908e77-7tr0zgs93uwh"},]
-   }, context={})
+    # Localhost testing
+    # lambda_handler(event={
+    #     "Records": [ {"body": "172#cdkstack-bucket83908e77-7tr0zgs93uwh"},]
+    # }, context={})
+
+
+    tbd_pics = [
+        "Game_TBD_32.jpeg", "Game_TBD_34.jpeg", "Game_TBD_33.jpeg"
+    #     "Game_TBD_28.jpeg", "Game_TBD_29.jpeg", "Game_TBD_30.jpeg", "Game_TBD_31.jpeg",
+    #     "Game_TBD_25.jpeg", "Game_TBD_27.jpeg", "Game_TBD_26.jpeg",
+    # "Game_TBD_17.jpeg", "Game_TBD_24.jpeg", "Game_TBD_23.jpeg", "Game_TBD_22.jpeg", "Game_TBD_21.jpeg", "Game_TBD_20.jpeg", "Game_TBD_19.jpeg", "Game_TBD_18.jpeg"
+    ]
+    for pic in tbd_pics:
+            
+        # Resize
+        img = Image.open(f"./tmp/{pic}")
+        img_ratio = img.size[0]/img.size[1]
+        if img_ratio < .95 or img_ratio > 1.05:
+            img = resize_with_padding(img, (600, 600))
+        else:
+            img.thumbnail((600, 600))
+
+        print(img.size)
+        print(img.format)
+        # img.show()
+        img.save(f"./new/{pic}")

@@ -14,6 +14,18 @@ Parameters:
     Type: String
     Default: Staging
     Description: API Stage
+  
+  CloudFrontS3Bucket:
+    Type: String
+    Default: cdkstack-bucket83908e77-7tr0zgs93uwh
+    Description: S3 Bucket Name for CloudFront Distribution
+
+  CognitoUserPoolArn:
+    Type: String
+    Default: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
+    Description: Cognito User Pool Arn
+
+    
 
 Resources:
   EventsApiGateway:
@@ -26,7 +38,7 @@ Resources:
         DefaultAuthorizer: CognitoPasswordless
         Authorizers:
           CognitoPasswordless:
-            UserPoolArn: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
+            UserPoolArn: !Ref CognitoUserPoolArn
       Cors: "'*'"
       # Cors: !Ref CorsOrigin
       EndpointConfiguration:
@@ -39,7 +51,6 @@ Resources:
           Parameters:
             Location: "swagger.yaml"
             # Location: s3://cp-sam-deploy-east1/swagger.yaml
-      # Models:
 
   EventsTable:
     Type: AWS::DynamoDB::Table
@@ -78,6 +89,7 @@ Resources:
       CodeUri: manage_events/
       Handler: app.lambda_handler
       Runtime: python3.12
+      MemorySize: 256
       Timeout: 30
       Events:
 
@@ -141,6 +153,24 @@ Resources:
             Auth:
               Authorizer: NONE
 
+        # /players
+        GetPlayers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /players
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        PlayersOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /players
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
         # /event/rsvp
         GetEventRSVP:
           Type: Api
@@ -148,6 +178,24 @@ Resources:
             RestApiId: !Ref EventsApiGateway
             Path: /event/rsvp
             Method: GET
+            RequestParameters:
+            Auth:
+              Authorizer: CognitoPasswordless
+        PutEventRSVP:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event/rsvp
+            Method: PUT
+            RequestParameters:
+            Auth:
+              Authorizer: CognitoPasswordless
+        DeleteEventRSVP:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /event/rsvp
+            Method: DELETE
             RequestParameters:
             Auth:
               Authorizer: CognitoPasswordless
@@ -166,8 +214,18 @@ Resources:
             TableName: !Ref EventsTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt BggPictureSqsQueue.QueueName
-        - S3ReadPolicy:
-            BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
+        - S3CrudPolicy:
+            BucketName: !Ref CloudFrontS3Bucket
+         # Allow cognito pool ListUsers
+        - Statement: 
+          - Effect: Allow
+            Action: 
+              - cognito-idp:ListUsers
+              - cognito-idp:ListUsersInGroup
+              - cognito-idp:ListGroups
+              
+            Resource: !Ref CognitoUserPoolArn
+            
             
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function
@@ -183,9 +241,10 @@ Resources:
             Queue: !GetAtt BggPictureSqsQueue.Arn
             BatchSize: 10
       Policies:
-        - S3CrudPolicy:
-            BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
-            
+        - S3ReadPolicy:
+            BucketName: !Ref CloudFrontS3Bucket
+        - S3WritePolicy:
+            BucketName: !Ref CloudFrontS3Bucket
   BggPictureSqsQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -194,7 +253,7 @@ Resources:
 Outputs:
   EventsApiGateway:
     Description: "API Gateway endpoint URL for Staging stage for Game Knights Events function"
-    Value: !Sub "https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events/"
+    Value: !Sub "https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
   EventsApiGatewayRestApiId:
     Description: "API Gateway ARN for Game Knights Events AWS API Gateway"
     Value: !Ref EventsApiGateway
