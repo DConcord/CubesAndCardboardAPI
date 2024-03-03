@@ -1,19 +1,20 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 'basic-aws-apigateway-demo Sample SAM Template for basic-aws-apigateway-demo
+Description: 'Backend API for Managing Game Knight events
 
   '
 Parameters:
-  CorsOrigin:
+  Stage:
     Type: String
-    Default: '''localhost:8080'''
-    Description: CORS Origin
+    Default: Staging
+    Description: API Stage
 Resources:
-  BasicAWSApiGateway:
+  EventsApiGateway:
     Type: AWS::Serverless::Api
     Properties:
-      Name: Basic AWS Api Gateway
-      StageName: v1
+      Name: Game Knights Events API
+      StageName:
+        Ref: Stage
       Auth:
         DefaultAuthorizer: CognitoPasswordless
         Authorizers:
@@ -22,55 +23,194 @@ Resources:
       Cors: '''*'''
       EndpointConfiguration:
         Type: EDGE
+      Tags:
+        Owner: EventsAPI
       DefinitionBody:
         Fn::Transform:
           Name: AWS::Include
           Parameters:
-            Location: s3://cp-sam-deploy-east1/swagger.yaml
+            Location: s3://cp-sam-deploy-east1/3de7325c7042d76ef18b9d1419c39321
     Metadata:
-      SamResourceId: BasicAWSApiGateway
-  HelloWorldFunction:
+      SamResourceId: EventsApiGateway
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: game_events
+      AttributeDefinitions:
+      - AttributeName: event_id
+        AttributeType: S
+      - AttributeName: event_type
+        AttributeType: S
+      - AttributeName: date
+        AttributeType: S
+      KeySchema:
+      - AttributeName: event_id
+        KeyType: HASH
+      GlobalSecondaryIndexes:
+      - IndexName: EventTypeByDate
+        KeySchema:
+        - AttributeName: event_type
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+      - Key: Name
+        Value: game_events
+      - Key: Owner
+        Value: EventsAPI
+    Metadata:
+      SamResourceId: EventsTable
+  ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: s3://cp-sam-deploy-east1/265c48aa4a0e9396f54601c4fb465e00
+      CodeUri: s3://cp-sam-deploy-east1/407d899f1914e15705900e3ed3d8d1a6
       Handler: app.lambda_handler
       Runtime: python3.12
+      Timeout: 30
       Events:
-        HelloWorldApi:
+        GetEvents:
           Type: Api
           Properties:
             RestApiId:
-              Ref: BasicAWSApiGateway
-            Path: /hello
+              Ref: EventsApiGateway
+            Path: /events
             Method: GET
             Auth:
               Authorizer: CognitoPasswordless
-        CORSApi:
+        EventsOptions:
           Type: Api
           Properties:
             RestApiId:
-              Ref: BasicAWSApiGateway
-            Path: /hello
+              Ref: EventsApiGateway
+            Path: /events
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+        GetEvent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        CreateEvent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: POST
+            Auth:
+              Authorizer: CognitoPasswordless
+        DeleteEvent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: DELETE
+            Auth:
+              Authorizer: CognitoPasswordless
+        UpdateEvent:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+        GetEventRSVP:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event/rsvp
+            Method: GET
+            RequestParameters: null
+            Auth:
+              Authorizer: CognitoPasswordless
+        EventRsvpOptions:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: EventsApiGateway
+            Path: /event/rsvp
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+      Tags:
+        Owner: EventsAPI
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: EventsTable
+      - SQSSendMessagePolicy:
+          QueueName:
+            Fn::GetAtt:
+            - BggPictureSqsQueue
+            - QueueName
+      - S3ReadPolicy:
+          BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
     Metadata:
-      SamResourceId: HelloWorldFunction
+      SamResourceId: ManageEventsFunction
+  RetrieveBGGImageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: s3://cp-sam-deploy-east1/d3b610f16044481eced129ac5eb502fa
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue:
+              Fn::GetAtt:
+              - BggPictureSqsQueue
+              - Arn
+            BatchSize: 10
+      Policies:
+      - S3CrudPolicy:
+          BucketName: cdkstack-bucket83908e77-7tr0zgs93uwh
+    Metadata:
+      SamResourceId: RetrieveBGGImageFunction
+  BggPictureSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: bgg_picture_sqs_queue
+    Metadata:
+      SamResourceId: BggPictureSqsQueue
 Outputs:
-  BasicAWSApiGateway:
-    Description: API Gateway endpoint URL for Staging stage for Hello World function
+  EventsApiGateway:
+    Description: API Gateway endpoint URL for Staging stage for Game Knights Events
+      function
     Value:
-      Fn::Sub: https://${BasicAWSApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Staging/hello/
-  BasicAWSApiGatewayRestApiId:
-    Description: API Gateway ARN for Basic AWS API Gateway
+      Fn::Sub: https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/events/
+  EventsApiGatewayRestApiId:
+    Description: API Gateway ARN for Game Knights Events AWS API Gateway
     Value:
-      Ref: BasicAWSApiGateway
+      Ref: EventsApiGateway
     Export:
-      Name: BasicAWSApiGateway-RestApiId
-  BasicAWSApiGatewayRootResourceId:
+      Name: EventsApiGateway-RestApiId
+  EventsApiGatewayRootResourceId:
     Value:
       Fn::GetAtt:
-      - BasicAWSApiGateway
+      - EventsApiGateway
       - RootResourceId
     Export:
-      Name: BasicAWSApiGateway-RootResourceId
+      Name: EventsApiGateway-RootResourceId
