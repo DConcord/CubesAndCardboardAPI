@@ -1,23 +1,17 @@
 version: 0.1
-default:
+prod:
   deploy:
     parameters:
       region: us-east-1
-      # template_file: template.yaml
       stack_name: GameKnightsEventsAPI
       capabilities: CAPABILITY_IAM
       s3_bucket: cp-sam-deploy-east1
-  # package:
-  #   parameters:
-  #     region: us-east-1
-  #     # template_file: template.yaml
-  #     s3_bucket: cp-sam-deploy-east1
-  #     output_template_file: output.yaml
+      parameter_overrides: "Mode=prod"
 dev:
   deploy:
     parameters:
       region: us-east-1
-      # template_file: template.yaml
-      stack_name: GameKnightsEventsAPI_DEV
+      stack_name: DEVGameKnightsEventsAPI
       capabilities: CAPABILITY_IAM
       s3_bucket: cp-sam-deploy-east1
+      parameter_overrides: "Mode=dev"

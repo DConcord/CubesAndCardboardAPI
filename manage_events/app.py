@@ -7,18 +7,21 @@ from datetime import datetime #, timedelta
 import uuid
 import botocore
 import time
+import os
 
-TABLE_NAME = 'game_events'
+TABLE_NAME = os.environ['table_name'] # 'game_events'
+S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
+SQS_URL = os.environ['sqs_url']
+
 ALLOWED_ORIGINS = [
   'http://localhost:8080',
-  'https://localhost:8080',
-  'https://myapp.dissonantconcord.com',
+  'https://eventsdev.dissonantconcord.com',
   'https://events.cubesandcardboard.net',
+  'https://www.cubesandcardboard.net',
   'https://cubesandcardboard.net'
 ]
-S3_BUCKET = 'cdkstack-bucket83908e77-7tr0zgs93uwh'
-PULL_BGG_PIC = False
 COGNITO_POOL_ID = 'us-east-1_Okkk4SAZX'
+PULL_BGG_PIC = False
 
 
 def lambda_handler(event, context):
@@ -31,7 +34,7 @@ def lambda_handler(event, context):
       print(f"WARNING: origin '{origin}' not allowed")
       return {
         'statusCode': 401,
-        'headers': {'Access-Control-Allow-Origin': 'https://myapp.dissonantconcord.com'},
+        'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
         'body': json.dumps({'message': 'CORS Failure'}),
       }
   
@@ -141,6 +144,7 @@ def lambda_handler(event, context):
         case 'GET':
           print('Get Events')
           events = getFutureEvents(as_json=True)
+          # events = getAllEvents(as_json=True)
           return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -214,13 +218,13 @@ def process_bgg_id(bgg_id):
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
   if not key_exists(S3_BUCKET, key):
-     PULL_BGG_PIC = True
-     # send message to sqs
-     print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
-     sqs = boto3.client('sqs')
-     queue_url = 'https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue' #sqs.get_queue_url(QueueName='bgg_picture_sqs_queue')['QueueUrl']
-     sqs.send_message(QueueUrl=queue_url, MessageBody=f'{bgg_id}#{S3_BUCKET}')
-     print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
+    PULL_BGG_PIC = True
+    # send message to sqs
+    print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
+    sqs = boto3.client('sqs')
+    # queue_url = 'https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue'
+    sqs.send_message(QueueUrl=SQS_URL, MessageBody=f'{bgg_id}#{S3_BUCKET}')
+    print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
 
 def waitForBggPic(bgg_id):
    # wait for 5 seconds at most
@@ -247,6 +251,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   if 'bgg_id' in eventDict: modified_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict: modified_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: modified_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  if 'migrated' in eventDict: modified_event['migrated'] = {'BOOL': eventDict['migrated']}
   if 'not_attending' in eventDict: 
     modified_event['not_attending'] = {'SS': eventDict['not_attending']}
   else :
@@ -312,6 +317,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
   if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: new_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  if 'migrated' in eventDict: new_event['migrated'] = {'BOOL': eventDict['migrated']}
   if 'not_attending' in eventDict: 
     new_event['not_attending'] = {'SS': eventDict['not_attending']}
   else :
@@ -374,13 +380,45 @@ def getFutureEvents(event_type='GameKnight', as_json=True):
     return response
 
 
+def getAllEvents(event_type='GameKnight', as_json=True):   
+  # date = parser.parse(text).date().isoformat()
+  current_date = datetime.now().date().isoformat()
+  ddb = boto3.resource('dynamodb', region_name='us-east-1')
+  table = ddb.Table(TABLE_NAME)
+  response = table.query(
+    TableName=TABLE_NAME,
+    IndexName='EventTypeByDate',
+    Select='ALL_ATTRIBUTES',
+    KeyConditionExpression=(Key('event_type').eq(event_type)),
+  )
+  for event in response['Items']:
+    try:
+
+      if 'not_attending' not in event: event['not_attending'] = set([])
+      if 'attending' not in event: event['attending'] = event['registered']
+      
+      if 'not_attending' in event and 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
+      if 'attending' in event and 'placeholder' in event['attending']: event['attending'].remove('placeholder')
+      if 'placeholder' in event['registered']: event['registered'].remove('placeholder')
+    except:
+      json.dumps(event, default=ddb_default)
+      raise
+  if as_json:
+     return json.dumps(response['Items'], default=ddb_default)
+  else:
+    return response
+
+
 def updatePublicEventsJson():
   future_events_json = getFutureEvents(event_type='GameKnight', as_json=True)
   s3 = boto3.client('s3')
   s3.put_object(
     Body=future_events_json,
     Bucket=S3_BUCKET,
-    Key='events.json'
+    Key='events.json',
+    ContentType='application/json',
+    CacheControl='no-cache',
+    # CacheControl='max-age=0, no-cache, no-store, must-revalidate',
   )
   print('events.json updated')
 
@@ -391,7 +429,10 @@ def updatePlayersGroupsJson():
   s3.put_object(
     Body=json.dumps(players_groups, indent=2, default=ddb_default),
     Bucket=S3_BUCKET,
-    Key='players_groups.json'
+    Key='players_groups.json',
+    ContentType='application/json',
+    CacheControl='no-cache' #max-age=0, no-cache, no-store, must-revalidate',
+    # Metadata={'Cache-Control': 'max-age=0, no-cache, no-store, must-revalidate'}
   )
   print('players_groups.json updated')
 
@@ -473,7 +514,18 @@ def reduceUserAttrib(user_dict):
 
 
 if __name__ == '__main__':
-  # updatePlayersGroupsJson()
+  ## Dev:
+  # export s3_bucket=cdkstack-bucketdevff8a9acd-pine3ubqpres
+  # export table_name=game_events_dev      
+  # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue_dev 
+
+  ## Prod:
+  # export s3_bucket=cdkstack-bucket83908e77-7tr0zgs93uwh
+  # export table_name=game_events     
+  # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue
+  
+  updatePublicEventsJson()
+  updatePlayersGroupsJson()
 
   # events = getFutureEvents(event_type='GameKnight', as_json=False)['Items']
   # for event in events:
@@ -482,9 +534,9 @@ if __name__ == '__main__':
   # print(json.dumps(getFutureEvents(event_type='GameKnight', as_json=False)['Items'], indent=2, default=ddb_default))
   
   
-  user_dict = getAllUsersInAllGroups()
-  # print(json.dumps(user_dict, indent=2, default=ddb_default))
-  print(json.dumps(reduceUserAttrib(user_dict), indent=2, default=ddb_default))
+  # user_dict = getAllUsersInAllGroups()
+  # # print(json.dumps(user_dict, indent=2, default=ddb_default))
+  # print(json.dumps(reduceUserAttrib(user_dict), indent=2, default=ddb_default))
 
   # match method:
   #   case 'GET':

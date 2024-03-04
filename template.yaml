@@ -2,37 +2,50 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Backend API for Managing Game Knight events
-Parameters:
-  # CORS
-  CorsOrigin:
-    Type: String
-    Default: "'localhost:8080'"
-    Description: CORS Origin
 
 Parameters:
+  Mode:
+    Type: String
+    Description: Mode of deployment
+    AllowedValues:
+      - prod
+      - dev
+
   Stage:
     Type: String
     Default: Staging
     Description: API Stage
-  
-  CloudFrontS3Bucket:
-    Type: String
-    Default: cdkstack-bucket83908e77-7tr0zgs93uwh
-    Description: S3 Bucket Name for CloudFront Distribution
 
   CognitoUserPoolArn:
     Type: String
     Default: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
     Description: Cognito User Pool Arn
 
-    
+Mappings:
+  EnvMap:
+    prod:
+      CloudFrontS3Bucket: cdkstack-bucket83908e77-7tr0zgs93uwh
+      EventsTableName: game_events
+      BggPictureSqsQueueName: bgg_picture_sqs_queue
+      ApiGatewayName: Game Knights Events API
+      OwnerTag: EventsAPI
+    dev:
+      CloudFrontS3Bucket: cdkstack-bucketdevff8a9acd-pine3ubqpres
+      EventsTableName: game_events_dev
+      BggPictureSqsQueueName: bgg_picture_sqs_queue_dev
+      ApiGatewayName: Game Knights Events API DEV
+      OwnerTag: DevEventsAPI
 
 Resources:
   EventsApiGateway:
     Type: AWS::Serverless::Api
     Properties:
-      Name: Game Knights Events API
+      Name: !FindInMap [EnvMap, !Ref Mode, ApiGatewayName]
       StageName: !Ref Stage
+      MethodSettings:
+        - LoggingLevel: INFO
+          ResourcePath: "/*" # allows for logging on any resource
+          HttpMethod: "*" # allows for logging on any method
       # Cognito pool auth
       Auth:
         DefaultAuthorizer: CognitoPasswordless
@@ -40,11 +53,10 @@ Resources:
           CognitoPasswordless:
             UserPoolArn: !Ref CognitoUserPoolArn
       Cors: "'*'"
-      # Cors: !Ref CorsOrigin
       EndpointConfiguration:
         Type: EDGE
       Tags:
-        Owner: EventsAPI
+        Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
       DefinitionBody:
         "Fn::Transform":
           Name: "AWS::Include"
@@ -55,7 +67,7 @@ Resources:
   EventsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: game_events
+      TableName: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
       AttributeDefinitions:
         - AttributeName: "event_id"
           AttributeType: "S"
@@ -73,26 +85,25 @@ Resources:
               KeyType: "HASH"
             - AttributeName: "date"
               KeyType: "RANGE"
-          Projection: 
+          Projection:
             ProjectionType: "ALL"
       BillingMode: PAY_PER_REQUEST
       Tags:
         - Key: Name
-          Value: game_events
+          Value: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
         - Key: Owner
           Value: EventsAPI
-
 
   ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub manage_events_${Mode}
       CodeUri: manage_events/
       Handler: app.lambda_handler
       Runtime: python3.12
       MemorySize: 256
       Timeout: 30
       Events:
-
         # /events
         GetEvents:
           Type: Api
@@ -208,31 +219,38 @@ Resources:
             Auth:
               Authorizer: NONE
       Tags:
-        Owner: EventsAPI
+        Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+      Environment:
+        Variables:
+          table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
+          s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          sqs_url: !Ref BggPictureSqsQueue
+
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref EventsTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt BggPictureSqsQueue.QueueName
         - S3CrudPolicy:
-            BucketName: !Ref CloudFrontS3Bucket
-         # Allow cognito pool ListUsers
-        - Statement: 
-          - Effect: Allow
-            Action: 
-              - cognito-idp:ListUsers
-              - cognito-idp:ListUsersInGroup
-              - cognito-idp:ListGroups
-              
-            Resource: !Ref CognitoUserPoolArn
-            
-            
+            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          # Allow cognito pool ListUsers
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+                - cognito-idp:ListUsersInGroup
+                - cognito-idp:ListGroups
+
+              Resource: !Ref CognitoUserPoolArn
+
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub "RetrieveBGGImage_${Mode}"
       CodeUri: bgg_picture/
       Handler: app.lambda_handler
       Runtime: python3.12
+      MemorySize: 256
       Timeout: 30
       Events:
         MySQSEvent:
@@ -242,13 +260,19 @@ Resources:
             BatchSize: 10
       Policies:
         - S3ReadPolicy:
-            BucketName: !Ref CloudFrontS3Bucket
+            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
         - S3WritePolicy:
-            BucketName: !Ref CloudFrontS3Bucket
+            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+      Tags:
+        Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
   BggPictureSqsQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: bgg_picture_sqs_queue
+      QueueName: !FindInMap [EnvMap, !Ref Mode, BggPictureSqsQueueName]
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
 Outputs:
   EventsApiGateway:
@@ -258,8 +282,11 @@ Outputs:
     Description: "API Gateway ARN for Game Knights Events AWS API Gateway"
     Value: !Ref EventsApiGateway
     Export:
-      Name: EventsApiGateway-RestApiId
+      Name: !Sub "EventsApiGateway-RestApiId-${Mode}"
   EventsApiGatewayRootResourceId:
     Value: !GetAtt EventsApiGateway.RootResourceId
     Export:
-      Name: EventsApiGateway-RootResourceId
+      Name: !Sub "EventsApiGateway-RootResourceId-${Mode}"
+
+  SQSUrl:
+    Value: !Ref BggPictureSqsQueue

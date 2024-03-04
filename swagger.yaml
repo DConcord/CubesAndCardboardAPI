@@ -213,12 +213,18 @@ paths:
                   type: array
                   items:
                     type: string
+                attending:
+                  type: array
+                  items:
+                    type: string
                 player_pool:
                   type: array
                   items:
                     type: string
                 tbd_pic:
                   type: string
+                migrated:
+                  type: boolean
       responses:
         "201":
           description: event created
@@ -328,12 +334,18 @@ paths:
                   type: array
                   items:
                     type: string
+                attending:
+                  type: array
+                  items:
+                    type: string
                 player_pool:
                   type: array
                   items:
                     type: string
                 tbd_pic:
                   type: string
+                migrated:
+                  type: boolean
 
       responses:
         "201":
@@ -605,11 +617,17 @@ components:
           type: array
           items:
             type: string
+        attending:
+          type: array
+          items:
+            type: string
         player_pool:
           items:
             type: string
         tbd_pic:
           type: string
+        migrated:
+          type: boolean
 definitions:
   Empty:
     type: object
