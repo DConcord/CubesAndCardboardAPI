@@ -129,18 +129,40 @@ def lambda_handler(event, context):
             'headers': {'Access-Control-Allow-Origin': origin},
             'body': json.dumps({'result': 'Event Deleted'})
           }
+        
     case '/event/rsvp':
 
       # Add RSVP
       match method:
         case 'POST':
-          print('Add RSVP for Event')
+          print('Update RSVP for Event')
           data = json.loads(event['body'])
-          response = addRSVP(data['event_id'], data['name'])
+          response = updateRSVP(data['event_id'], data['user_id'], data['rsvp'])
+          print('Update Player Pools')
+          updatePlayerPools()
+          print('Event Deleted; Publish public events.json')
+          updatePublicEventsJson()
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
             'body': json.dumps({'result': 'RSVP Added'})
+          }
+        
+      # Delete RSVP
+      match method:
+        case 'DELETE':
+          print('Delete RSVP for Event')
+          # data = json.loads(event['body'])
+          data = event['queryStringParameters']
+          response = deleteRSVP(data['event_id'], data['user_id'], data['rsvp'])
+          print('Update Player Pools')
+          updatePlayerPools()
+          print('Event Deleted; Publish public events.json')
+          updatePublicEventsJson()
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps({'result': 'RSVP Removed'})
           }
         
     case '/events':
@@ -439,15 +461,32 @@ def updatePlayersGroupsJson():
   print('players_groups.json updated')
 
 
-def addRSVP(event_id, user_id):
+def updateRSVP(event_id, user_id, rsvp):
+  if rsvp == 'attending':
+    delete = 'not_attending'
+  elif rsvp == 'not_attending':
+    delete = 'attending'
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
   table = ddb.Table(TABLE_NAME)
   response = table.update_item(
     Key={ 'event_id': event_id },
-    UpdateExpression='ADD attending :rsvp',
-    ConditionExpression=Attr('event_id').exists(),
+    UpdateExpression=f'ADD {rsvp} :user_id DELETE {delete} :user_id',
+    ConditionExpression=Attr('event_id').exists() & (Attr('player_pool').contains(user_id) | Attr('organizer_pool').contains(user_id)),
     ExpressionAttributeValues={
-      ':rsvp': user_id
+      ':user_id': set([user_id])
+    }
+  )
+  return response
+
+def deleteRSVP(event_id, user_id, rsvp):
+  ddb = boto3.resource('dynamodb', region_name='us-east-1')
+  table = ddb.Table(TABLE_NAME)
+  response = table.update_item(
+    Key={ 'event_id': event_id },
+    UpdateExpression=f'DELETE {rsvp} :user_id',
+    ConditionExpression=Attr('event_id').exists() & (Attr('player_pool').contains(user_id) | Attr('organizer_pool').contains(user_id)),
+    ExpressionAttributeValues={
+      ':user_id': set([user_id])
     }
   )
   return response
@@ -468,8 +507,16 @@ def is_after_sunday_midnight_of(given_date):
 def updatePlayerPools():
   from collections import defaultdict 
   import dateutil.parser as parser
-  players = [player['Username'] for player in listUsersInGroup("player")]
-  organizers = [player['Username'] for player in listUsersInGroup("organizer")]
+
+  s3 = boto3.resource('s3')
+  content_object = s3.Object(S3_BUCKET, 'players_groups.json')
+  file_content = content_object.get()['Body'].read().decode('utf-8')
+  players_groups = json.loads(file_content)
+
+  players = players_groups['Groups']['player']
+  organizers = players_groups['Groups']['organizer']
+  # players = [player['Username'] for player in listUsersInGroup("player")]
+  # organizers = [player['Username'] for player in listUsersInGroup("organizer")]
   players_spent = set()
   organizers_spent = set()
   event_updates = defaultdict(dict)
@@ -478,9 +525,6 @@ def updatePlayerPools():
   ## First round: organizers_spent
   for event in futureEvents:
     if event['format'] == 'Open':
-      print(event['date'])
-      print(set(players) != set(event["player_pool"]))
-      print(set(players), set(event["player_pool"]))
       if set(players) != set(event["player_pool"]):
         event_updates[event['event_id']]['player_pool'] = set(players)
       if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
@@ -489,8 +533,6 @@ def updatePlayerPools():
 
     if event['format'] != 'Reserved': continue
     if event['organizer'] != '' and event['organizer'] not in event['attending']:
-      print(f"Event {event['event_id']} has no organizer and is not attending")
-      print(event['organizer'])
       event['organizer'] = ''
       event_updates[event['event_id']]['organizer'] = ''
       continue

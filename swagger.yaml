@@ -437,7 +437,7 @@ paths:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
         httpMethod: POST
         type: aws_proxy
-    put:
+    post:
       tags:
         - events
       summary: Add RSVP
@@ -452,13 +452,22 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: name
+        - name: user_id
           in: body
-          description: Player name # id
+          description: Player id
           required: true
           schema:
             type: string
-            # format: uuid
+            format: uuid
+        - name: rsvp
+          in: body
+          description: RSVP status
+          required: true
+          schema:
+            type: string
+            enum:
+              - not_attending
+              - attending
       responses:
         "201":
           description: RSVP added
@@ -484,13 +493,22 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: name
-          in: query
-          description: Player name # id
+        - name: user_id
+          in: body
+          description: Player id
           required: true
           schema:
             type: string
-            # format: uuid
+            format: uuid
+        - name: rsvp
+          in: body
+          description: RSVP status
+          required: true
+          schema:
+            type: string
+            enum:
+              - not_attending
+              - attending
       responses:
         "201":
           description: RSVP removed
