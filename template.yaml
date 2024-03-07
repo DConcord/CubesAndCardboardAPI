@@ -101,7 +101,7 @@ Resources:
       CodeUri: manage_events/
       Handler: app.lambda_handler
       Runtime: python3.12
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 30
       Events:
         # /events
@@ -192,12 +192,12 @@ Resources:
             RequestParameters:
             Auth:
               Authorizer: CognitoPasswordless
-        PutEventRSVP:
+        PostEventRSVP:
           Type: Api
           Properties:
             RestApiId: !Ref EventsApiGateway
             Path: /event/rsvp
-            Method: PUT
+            Method: POST
             RequestParameters:
             Auth:
               Authorizer: CognitoPasswordless
