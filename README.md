@@ -25,5 +25,8 @@ sam deploy --template-file template.yaml --stack-name GameKnightsEventsAPI --cap
 sam delete --stack-name GameKnightsEventsAPI --region us-east-1
 ``` -->
 
-sam build && sam deploy
-sam build --config-env dev && sam deploy --config-env dev
+<!-- sam build && sam deploy -->
+
+sam build --config-env prod && sam deploy --config-env prod --confirm-changeset
+
+sam build --config-env dev && sam deploy --config-env dev --confirm-changeset

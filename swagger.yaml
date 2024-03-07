@@ -179,7 +179,9 @@ paths:
                 - format
                 - game
                 - host
-                - registered
+                - organizer
+                - attending
+                - not_attending
               type: object
               properties:
                 event_id: # Ignored if supplied for new event (generated in lambda)
@@ -213,12 +215,21 @@ paths:
                   type: array
                   items:
                     type: string
+                attending:
+                  type: array
+                  items:
+                    type: string
                 player_pool:
                   type: array
                   items:
                     type: string
+                organizer_pool:
+                  items:
+                    type: string
                 tbd_pic:
                   type: string
+                migrated:
+                  type: boolean
       responses:
         "201":
           description: event created
@@ -294,7 +305,9 @@ paths:
                 - format
                 - game
                 - host
-                - registered
+                - organizer
+                - attending
+                - not_attending
               type: object
               properties:
                 event_id:
@@ -328,12 +341,21 @@ paths:
                   type: array
                   items:
                     type: string
+                attending:
+                  type: array
+                  items:
+                    type: string
                 player_pool:
                   type: array
                   items:
                     type: string
+                organizer_pool:
+                  items:
+                    type: string
                 tbd_pic:
                   type: string
+                migrated:
+                  type: boolean
 
       responses:
         "201":
@@ -605,11 +627,20 @@ components:
           type: array
           items:
             type: string
+        attending:
+          type: array
+          items:
+            type: string
         player_pool:
+          items:
+            type: string
+        organizer_pool:
           items:
             type: string
         tbd_pic:
           type: string
+        migrated:
+          type: boolean
 definitions:
   Empty:
     type: object

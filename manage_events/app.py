@@ -2,23 +2,26 @@ import json
 import boto3
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.conditions import Attr
-import dateutil.parser as parser
+from dateutil.relativedelta import relativedelta, SU
 from datetime import datetime #, timedelta
 import uuid
 import botocore
 import time
+import os
 
-TABLE_NAME = 'game_events'
+TABLE_NAME = os.environ['table_name'] # 'game_events'
+S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
+SQS_URL = os.environ['sqs_url']
+
 ALLOWED_ORIGINS = [
   'http://localhost:8080',
-  'https://localhost:8080',
-  'https://myapp.dissonantconcord.com',
+  'https://eventsdev.dissonantconcord.com',
   'https://events.cubesandcardboard.net',
+  'https://www.cubesandcardboard.net',
   'https://cubesandcardboard.net'
 ]
-S3_BUCKET = 'cdkstack-bucket83908e77-7tr0zgs93uwh'
-PULL_BGG_PIC = False
 COGNITO_POOL_ID = 'us-east-1_Okkk4SAZX'
+PULL_BGG_PIC = False
 
 
 def lambda_handler(event, context):
@@ -31,7 +34,7 @@ def lambda_handler(event, context):
       print(f"WARNING: origin '{origin}' not allowed")
       return {
         'statusCode': 401,
-        'headers': {'Access-Control-Allow-Origin': 'https://myapp.dissonantconcord.com'},
+        'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
         'body': json.dumps({'message': 'CORS Failure'}),
       }
   
@@ -65,6 +68,8 @@ def lambda_handler(event, context):
           print('Create Event')
           data = json.loads(event['body'])
           response = createEvent(data)
+          print('Update Player Pools')
+          updatePlayerPools()
           print('Event Created; Publish public events.json')
           updatePublicEventsJson()
           if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
@@ -89,6 +94,8 @@ def lambda_handler(event, context):
           print('Modify Event')
           data = json.loads(event['body'])
           response = modifyEvent(data)
+          print('Update Player Pools')
+          updatePlayerPools()
           print('Event Modified; Publish public events.json')
           updatePublicEventsJson()
           if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
@@ -113,6 +120,8 @@ def lambda_handler(event, context):
           print('Delete Event')
           event_id = event['queryStringParameters']['event_id']
           response = deleteEvent(event_id)
+          print('Update Player Pools')
+          updatePlayerPools()
           print('Event Deleted; Publish public events.json')
           updatePublicEventsJson()
           return {
@@ -141,6 +150,7 @@ def lambda_handler(event, context):
         case 'GET':
           print('Get Events')
           events = getFutureEvents(as_json=True)
+          # events = getAllEvents(as_json=True)
           return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -214,13 +224,13 @@ def process_bgg_id(bgg_id):
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
   if not key_exists(S3_BUCKET, key):
-     PULL_BGG_PIC = True
-     # send message to sqs
-     print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
-     sqs = boto3.client('sqs')
-     queue_url = 'https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue' #sqs.get_queue_url(QueueName='bgg_picture_sqs_queue')['QueueUrl']
-     sqs.send_message(QueueUrl=queue_url, MessageBody=f'{bgg_id}#{S3_BUCKET}')
-     print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
+    PULL_BGG_PIC = True
+    # send message to sqs
+    print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
+    sqs = boto3.client('sqs')
+    # queue_url = 'https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue'
+    sqs.send_message(QueueUrl=SQS_URL, MessageBody=f'{bgg_id}#{S3_BUCKET}')
+    print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
 
 def waitForBggPic(bgg_id):
    # wait for 5 seconds at most
@@ -240,23 +250,23 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
     'organizer': {'S': eventDict['organizer']} if 'organizer' in eventDict else {'S': ''},
     'format': {'S': eventDict['format']},
     'game': {'S': eventDict['game']},
-    'registered': {'SS': eventDict['registered']},
+    'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']},
   }
-  modified_event['attending'] = modified_event['registered']
   if 'bgg_id' in eventDict: modified_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict: modified_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: modified_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  # if 'migrated' in eventDict: modified_event['migrated'] = {'BOOL': eventDict['migrated']}
   if 'not_attending' in eventDict: 
     modified_event['not_attending'] = {'SS': eventDict['not_attending']}
   else :
     modified_event['not_attending'] = {'SS': ['placeholder']}
 
-  # Make sure 'placeholder' is in not_attending and registered sets (will be deduplicated)
+  # Make sure 'placeholder' is in not_attending and attending sets (will be deduplicated)
   if 'placeholder' not in modified_event['not_attending']['SS']:
     modified_event['not_attending']['SS'].append('placeholder')
-  if 'placeholder' not in modified_event['registered']['SS']:
-    modified_event['registered']['SS'].append('placeholder')
+  # if 'placeholder' not in modified_event['registered']['SS']:
+  #   modified_event['registered']['SS'].append('placeholder')
   if 'placeholder' not in modified_event['attending']['SS']:
     modified_event['attending']['SS'].append('placeholder')
 
@@ -276,26 +286,24 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   return response
 ## modifyEvent(eventDict)
   
+## Update specific attributes of an event
+def updateEvent(event_id, event_updates):
+  ddb = boto3.resource('dynamodb', region_name='us-east-1')
+  table = ddb.Table(TABLE_NAME)
+  response = table.update_item(
+    Key={ 'event_id': event_id },
+    UpdateExpression='SET ' + ', '.join([f'{k} = :{k}' for k in event_updates.keys()]),
+    ConditionExpression=Attr('event_id').exists(),
+    ExpressionAttributeValues={
+      f':{k}': v for k, v in event_updates.items()
+    }
+  )
+  print(f'Event {event_id} updated')
+  return response
+## def updateEvent(event_id, event_updates)
+
 
 def createEvent(eventDict, process_bgg_id_image=True):
-
-  # TEMP until Cognito is populated
-  player_pool = [
-    'Luke',
-    'Eric',
-    'Colten',
-    'Frank',
-    'Wynn',
-    'Scott',
-    'Tim',
-    'Kevin',
-    'Agustin',
-    'Steve',
-    'Brett',
-    'Jake',
-    'Garrett',
-    'Robert',
-  ]
         
   new_event = {
     'event_id': {'S': eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())}, # temp: allow supplying event_id
@@ -305,23 +313,24 @@ def createEvent(eventDict, process_bgg_id_image=True):
     'organizer': {'S': eventDict['organizer']} if 'organizer' in eventDict else {'S': ''},
     'format': {'S': eventDict['format']},
     'game': {'S': eventDict['game']},
-    'registered': {'SS': eventDict['registered']},
-    'player_pool': {'SS': player_pool} # temp
+    'attending': {'SS': eventDict['attending']},
+    'player_pool': {'SS': eventDict['player_pool']} # temp
   }
-  new_event['attending'] = new_event['registered']
+  # new_event['attending'] = new_event['registered']
   if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: new_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  # if 'migrated' in eventDict: new_event['migrated'] = {'BOOL': eventDict['migrated']}
   if 'not_attending' in eventDict: 
     new_event['not_attending'] = {'SS': eventDict['not_attending']}
   else :
     new_event['not_attending'] = {'SS': ['placeholder']}
 
-  # Make sure 'placeholder' is in not_attending and registered sets (will be deduplicated)
+  # Make sure 'placeholder' is in not_attending and attending sets (will be deduplicated)
   if 'placeholder' not in new_event['not_attending']['SS']:
     new_event['not_attending']['SS'].append('placeholder')
-  if 'placeholder' not in new_event['registered']['SS']:
-    new_event['registered']['SS'].append('placeholder')
+  # if 'placeholder' not in new_event['registered']['SS']:
+  #   new_event['registered']['SS'].append('placeholder')
   if 'placeholder' not in new_event['attending']['SS']:
     new_event['attending']['SS'].append('placeholder')
 
@@ -366,8 +375,36 @@ def getFutureEvents(event_type='GameKnight', as_json=True):
   )
   for event in response['Items']:
     if 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
-    if 'placeholder' in event['registered']: event['registered'].remove('placeholder')
+    # if 'placeholder' in event['registered']: event['registered'].remove('placeholder')
     if 'placeholder' in event['attending']: event['attending'].remove('placeholder')
+  if as_json:
+     return json.dumps(response['Items'], default=ddb_default)
+  else:
+    return response
+
+
+def getAllEvents(event_type='GameKnight', as_json=True):   
+  # date = parser.parse(text).date().isoformat()
+  ddb = boto3.resource('dynamodb', region_name='us-east-1')
+  table = ddb.Table(TABLE_NAME)
+  response = table.query(
+    TableName=TABLE_NAME,
+    IndexName='EventTypeByDate',
+    Select='ALL_ATTRIBUTES',
+    KeyConditionExpression=(Key('event_type').eq(event_type)),
+  )
+  for event in response['Items']:
+    try:
+
+      if 'not_attending' not in event: event['not_attending'] = set([])
+      # if 'attending' not in event: event['attending'] = event['registered']
+      
+      if 'not_attending' in event and 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
+      if 'attending' in event and 'placeholder' in event['attending']: event['attending'].remove('placeholder')
+      # if 'placeholder' in event['registered']: event['registered'].remove('placeholder')
+    except:
+      json.dumps(event, default=ddb_default)
+      raise
   if as_json:
      return json.dumps(response['Items'], default=ddb_default)
   else:
@@ -380,7 +417,10 @@ def updatePublicEventsJson():
   s3.put_object(
     Body=future_events_json,
     Bucket=S3_BUCKET,
-    Key='events.json'
+    Key='events.json',
+    ContentType='application/json',
+    CacheControl='no-cache',
+    # CacheControl='max-age=0, no-cache, no-store, must-revalidate',
   )
   print('events.json updated')
 
@@ -391,7 +431,10 @@ def updatePlayersGroupsJson():
   s3.put_object(
     Body=json.dumps(players_groups, indent=2, default=ddb_default),
     Bucket=S3_BUCKET,
-    Key='players_groups.json'
+    Key='players_groups.json',
+    ContentType='application/json',
+    CacheControl='no-cache' #max-age=0, no-cache, no-store, must-revalidate',
+    # Metadata={'Cache-Control': 'max-age=0, no-cache, no-store, must-revalidate'}
   )
   print('players_groups.json updated')
 
@@ -413,6 +456,76 @@ def addRSVP(event_id, user_id):
 ## updateRsvp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Luke', 'not_attending')
 ## updateRsvp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Luke', 'attending')
 ## updateRsvp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Luke
+
+
+def is_after_sunday_midnight_of(given_date):
+  # Get Sunday of the same week
+  sunday = given_date + relativedelta(weekday=SU(-1))
+
+  # Compare current datetime to midnight of that Sunday
+  return datetime.now() > sunday
+  
+def updatePlayerPools():
+  from collections import defaultdict 
+  import dateutil.parser as parser
+  players = [player['Username'] for player in listUsersInGroup("player")]
+  organizers = [player['Username'] for player in listUsersInGroup("organizer")]
+  players_spent = set()
+  organizers_spent = set()
+  event_updates = defaultdict(dict)
+  futureEvents = getFutureEvents(as_json=False)['Items']
+
+  ## First round: organizers_spent
+  for event in futureEvents:
+    if event['format'] != 'Reserved': continue
+    if event['organizer'] != '' and event['organizer'] not in event['attending']:
+      print(f"Event {event['event_id']} has no organizer and is not attending")
+      print(event['organizer'])
+      event['organizer'] = ''
+      event_updates[event['event_id']]['organizer'] = ''
+      continue
+    if event['organizer'] != '': 
+      organizers_spent.add(event['organizer'])
+
+  ## Second round: players_spent and event organizer + organizers_spent
+  for event in futureEvents:
+    if event['format'] != 'Reserved': continue
+    for player in event['attending']:
+      if player == event['host']: continue
+      if player in organizers:
+        if event['organizer'] == '' and 'organizer' not in event_updates[event['event_id']] and player not in organizers_spent:
+          event['organizer'] = player
+          event_updates[event['event_id']]['organizer'] = player
+          organizers_spent.add(player)
+          continue
+        elif event['organizer'] == player:
+          organizers_spent.add(player)
+          continue
+      players_spent.add(player)
+
+  # Round 3. Update Player and Organizer pools
+  for event in futureEvents:
+    if event['format'] != 'Reserved': continue
+    if is_after_sunday_midnight_of(parser.parse(event['date'])):
+      if set(players) != set(event["player_pool"]):
+        event_updates[event['event_id']]['player_pool'] = set(players)
+      if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
+        event_updates[event['event_id']]['organizer_pool'] = set(organizers)
+    else:
+      player_pool = set(players) - players_spent
+      player_pool.update(event['attending'])
+      organizer_pool = set(organizers) - organizers_spent
+      if event['organizer'] != '': organizer_pool.add(event['organizer'])
+      if player_pool != set(event["player_pool"]):
+        event_updates[event['event_id']]['player_pool'] = set(player_pool)
+      if 'organizer_pool' not in event or organizer_pool != set(event["organizer_pool"]):
+        event_updates[event['event_id']]['organizer_pool'] = set(organizer_pool)
+  
+  print(json.dumps({"event_updates": event_updates}, indent=2, default=ddb_default))
+  # input("Pause")
+  for event_id, event_update in event_updates.items():
+    updateEvent(event_id, event_update)
+## end def updatePlayerPools()
 
 
 
@@ -473,7 +586,53 @@ def reduceUserAttrib(user_dict):
 
 
 if __name__ == '__main__':
-  # updatePlayersGroupsJson()
+
+  updatePlayerPools()
+  quit()
+
+  # import dateutil.parser as parser
+
+  # from datetime import datetime, timedelta
+  # # todayDate = datetime.now().date()
+  # # lastSunday = todayDate + relativedelta(weekday=SU(-1))
+
+
+  # from dateutil.relativedelta import relativedelta, SU
+  
+  # def is_after_sunday_midnight_of(given_date):
+  #   # Get Sunday of the same week
+  #   sunday = given_date + relativedelta(weekday=SU(-1))
+
+  #   # Compare current datetime to midnight of that Sunday
+  #   return datetime.now() > sunday
+
+  # given_date = datetime(2024, 3, 5)
+  # print(is_after_sunday_midnight_of(given_date))
+
+  # quit()
+
+
+  # # current_date = datetime.now().date().isoformat()
+  # current_date = datetime.now().date()
+  # print(current_date)
+  # date = parser.parse("2024-03-07").date().isoformat()
+  # print(date)
+  # date = parser.parse("2024-03-07-07:00")
+  # print(date)
+  # quit()
+
+  ## Dev:
+  # export s3_bucket=cdkstack-bucketdevff8a9acd-pine3ubqpres
+  # export table_name=game_events_dev      
+  # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue_dev 
+
+  ## Prod:
+  # export s3_bucket=cdkstack-bucket83908e77-7tr0zgs93uwh
+  # export table_name=game_events     
+  # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue
+  
+  updatePublicEventsJson()
+  updatePlayersGroupsJson()
 
   # events = getFutureEvents(event_type='GameKnight', as_json=False)['Items']
   # for event in events:
@@ -482,9 +641,9 @@ if __name__ == '__main__':
   # print(json.dumps(getFutureEvents(event_type='GameKnight', as_json=False)['Items'], indent=2, default=ddb_default))
   
   
-  user_dict = getAllUsersInAllGroups()
-  # print(json.dumps(user_dict, indent=2, default=ddb_default))
-  print(json.dumps(reduceUserAttrib(user_dict), indent=2, default=ddb_default))
+  # user_dict = getAllUsersInAllGroups()
+  # # print(json.dumps(user_dict, indent=2, default=ddb_default))
+  # print(json.dumps(reduceUserAttrib(user_dict), indent=2, default=ddb_default))
 
   # match method:
   #   case 'GET':
