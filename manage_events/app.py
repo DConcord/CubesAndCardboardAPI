@@ -477,6 +477,16 @@ def updatePlayerPools():
 
   ## First round: organizers_spent
   for event in futureEvents:
+    if event['format'] == 'Open':
+      print(event['date'])
+      print(set(players) != set(event["player_pool"]))
+      print(set(players), set(event["player_pool"]))
+      if set(players) != set(event["player_pool"]):
+        event_updates[event['event_id']]['player_pool'] = set(players)
+      if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
+        event_updates[event['event_id']]['organizer_pool'] = set(organizers)
+      
+
     if event['format'] != 'Reserved': continue
     if event['organizer'] != '' and event['organizer'] not in event['attending']:
       print(f"Event {event['event_id']} has no organizer and is not attending")
