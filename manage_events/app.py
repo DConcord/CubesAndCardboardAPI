@@ -513,7 +513,9 @@ def updatePlayerPools():
         event_updates[event['event_id']]['organizer_pool'] = set(organizers)
     else:
       player_pool = set(players) - players_spent
+      player_pool.update(event['attending'])
       organizer_pool = set(organizers) - organizers_spent
+      if event['organizer'] != '': organizer_pool.add(event['organizer'])
       if player_pool != set(event["player_pool"]):
         event_updates[event['event_id']]['player_pool'] = set(player_pool)
       if 'organizer_pool' not in event or organizer_pool != set(event["organizer_pool"]):
