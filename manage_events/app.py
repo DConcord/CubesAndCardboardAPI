@@ -12,6 +12,7 @@ import os
 TABLE_NAME = os.environ['table_name'] # 'game_events'
 S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
 SQS_URL = os.environ['sqs_url']
+BACKEND_BUCKET = os.environ['backend_bucket']
 
 ALLOWED_ORIGINS = [
   'http://localhost:8080',
@@ -37,11 +38,21 @@ def lambda_handler(event, context):
         'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
         'body': json.dumps({'message': 'CORS Failure'}),
       }
+  unauthorized = {
+    'statusCode': 401,
+    'headers': {'Access-Control-Allow-Origin': origin},
+    'body': json.dumps({'message': 'Not authorized'})
+  }
   
   try:
     auth_groups = event['requestContext']['authorizer']['claims']['cognito:groups'].split(',')
   except KeyError:
     auth_groups = []
+
+  try:
+    auth_sub = event['requestContext']['authorizer']['claims']['sub']
+  except KeyError:
+    auth_sub = None
 
   method = event['requestContext']['httpMethod']
   api_path = event['resource']
@@ -55,16 +66,8 @@ def lambda_handler(event, context):
 
         # Create Event
         case 'POST':
-          if not authorize(auth_groups, ['admin']): 
-            print(json.dumps({
-              'message': 'Not authorized',
-              'requestContext': event['requestContext']
-            }))
-            return {
-              'statusCode': 401,
-              'headers': {'Access-Control-Allow-Origin': origin},
-              'body': json.dumps({'message': 'Not authorized'})
-            }
+          if not authorize(event, auth_groups, ['admin']):
+            return unauthorized
           print('Create Event')
           data = json.loads(event['body'])
           response = createEvent(data)
@@ -81,16 +84,9 @@ def lambda_handler(event, context):
         
         # Modify Event
         case 'PUT':
-          if not authorize(auth_groups, ['admin']): 
-            print(json.dumps({
-              'message': 'Not authorized',
-              'requestContext': event['requestContext']
-            }))
-            return {
-              'statusCode': 401,
-              'headers': {'Access-Control-Allow-Origin': origin},
-              'body': json.dumps({'message': 'Not authorized'})
-            }
+          if not authorize(event, auth_groups, ['admin']): 
+            return unauthorized
+          
           print('Modify Event')
           data = json.loads(event['body'])
           response = modifyEvent(data)
@@ -107,18 +103,11 @@ def lambda_handler(event, context):
                    
         # Delete Event
         case 'DELETE':
-          if not authorize(auth_groups, ['admin']): 
-            print(json.dumps({
-              'message': 'Not authorized',
-              'requestContext': event['requestContext']
-            }))
-            return {
-              'statusCode': 401,
-              'headers': {'Access-Control-Allow-Origin': origin},
-              'body': json.dumps({'message': 'Not authorized'})
-            }
+          if not authorize(event, auth_groups, ['admin']): 
+            return unauthorized
+          
           print('Delete Event')
-          event_id = event['queryStringParameters']['event_id']
+          event_id = event['queryStringParameters']['event_id'] 
           response = deleteEvent(event_id)
           print('Update Player Pools')
           updatePlayerPools()
@@ -137,6 +126,9 @@ def lambda_handler(event, context):
         case 'POST':
           print('Update RSVP for Event')
           data = json.loads(event['body'])
+          if auth_sub != data['user_id']:
+            print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
+            return unauthorized
           response = updateRSVP(data['event_id'], data['user_id'], data['rsvp'])
           print('Update Player Pools')
           updatePlayerPools()
@@ -152,8 +144,10 @@ def lambda_handler(event, context):
       match method:
         case 'DELETE':
           print('Delete RSVP for Event')
-          # data = json.loads(event['body'])
           data = event['queryStringParameters']
+          if auth_sub != data['user_id']:
+            print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
+            return unauthorized
           response = deleteRSVP(data['event_id'], data['user_id'], data['rsvp'])
           print('Update Player Pools')
           updatePlayerPools()
@@ -185,21 +179,180 @@ def lambda_handler(event, context):
         # Get Players
         case 'GET':
           print('Get Players')
-          users = getAllUsersInAllGroups()
-          user_dict = reduceUserAttrib(users)
+          refresh = "no"
+          if event['queryStringParameters'] and event['queryStringParameters']['refresh']:
+            refresh = event['queryStringParameters']['refresh'].lower()
+
+          if authorize(event, auth_groups, ['admin']): 
+            if refresh.lower() == 'yes':
+              print('Get full players/groups refresh')
+              user_dict = updatePlayersGroupsJson()
+            else:
+              user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          else:
+            user_dict = getJsonS3(S3_BUCKET, 'players_groups.json')
+            # user_dict = reduceUserAttrib(getAllUsersInAllGroups())  
+          # users = getAllUsersInAllGroups()
+          # user_dict = reduceUserAttrib(users)
           return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': origin},
             'body': json.dumps(user_dict, indent=2, default=ddb_default)
           }
 
+    case '/player':
+      match method:
+        
+        # Create new Player
+        case 'POST':
+          if not authorize(event, auth_groups, ['admin']): 
+            return unauthorized
+          
+          data = json.loads(event['body'])
+          attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute != 'groups']
+          attributes.append({'Name': 'email_verified', 'Value': 'true'})
+          client = boto3.client('cognito-idp')
+          response = client.admin_create_user(
+            UserPoolId=COGNITO_POOL_ID,
+            Username=data['email'],
+            UserAttributes=attributes,
+            MessageAction='SUPPRESS'
+          )
+
+          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          user = response['User']
+          user_id = user['Username']
+          user_dict['Users'][user_id] = {'groups': [], 'attrib': {}, **user}
+          for attrib in user['Attributes']:
+            user_dict['Users'][user_id]['attrib'][attrib['Name']] = attrib['Value']
+          for group in data['groups']:
+            user_dict['Groups'][group].append(user_id)
+            user_dict['Users'][user_id]['groups'].append(group)
+            response = client.admin_add_user_to_group(
+                UserPoolId=COGNITO_POOL_ID,
+                Username=user_id,
+                GroupName=group
+            )
+          updatePlayersGroupsJson(players_groups=user_dict)
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(user_dict, indent=2, default=ddb_default)
+          }
+
+        # Update Existing Player
+        case 'PUT':
+          if not authorize(event, auth_groups, ['admin']): 
+            return unauthorized
+          
+          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          data = json.loads(event['body'])
+          user_id = data['user_id']
+          attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id']]
+          attributes.append({'Name': 'sub', 'Value': user_id})
+          attributes.append({'Name': 'email_verified', 'Value': 'true'})
+
+          old_attributes = {attrib['Name']: attrib['Value'] for attrib in user_dict['Users'][user_id]['Attributes']}
+          new_attributes = {attrib['Name']: attrib['Value'] for attrib in attributes}
+          attrib_changes = []
+          if old_attributes != new_attributes:
+            diff = compareAttributes(old_attributes, new_attributes)
+            for attribute, value in diff['changed'].items():
+              attrib_changes.append({'Name': attribute, 'Value': value})
+            for attribute, value in diff['removed'].items():
+              attrib_changes.append({'Name': attribute, 'Value': ""})
+            
+            client = boto3.client('cognito-idp')
+            attrib_response = client.admin_update_user_attributes(
+              UserPoolId=COGNITO_POOL_ID,
+              Username=user_id,
+              UserAttributes=attrib_changes
+            )
+          if set(data['groups']) != set(user_dict['Users'][user_id]['groups']):
+            group_changes = {'added': [], 'removed': []}
+            client = boto3.client('cognito-idp')
+            # remove user from all groups they are no longer in
+            for group in user_dict['Users'][user_id]['groups']:
+              if group not in data['groups']:
+                client.admin_remove_user_from_group(
+                  UserPoolId=COGNITO_POOL_ID,
+                  Username=user_id,
+                  GroupName=group
+                )
+                group_changes['removed'].append(group)
+            # add user to all groups they are now in
+            for group in data['groups']:
+              if group not in user_dict['Users'][user_id]['groups']:
+                client.admin_add_user_to_group(
+                  UserPoolId=COGNITO_POOL_ID,
+                  Username=user_id,
+                  GroupName=group
+                )
+                group_changes['added'].append(group)
+          
+          # If attributes changed, update the user_dict
+          if attrib_changes != []:
+            response = client.admin_get_user(
+              UserPoolId=COGNITO_POOL_ID,
+              Username=user_id,
+            )
+            user = response
+            user['Attributes'] = user['UserAttributes']
+            del user['UserAttributes']
+            user_dict['Users'][user_id] = {'groups': user_dict['Users'][user_id]['groups'], 'attrib': {}, **user}
+            for attrib in user['Attributes']:
+              user_dict['Users'][user_id]['attrib'][attrib['Name']] = attrib['Value']
+          
+          # If groups changed, update the user_dict
+          for group in group_changes['added']:
+            user_dict['Groups'][group].append(user_id)
+            user_dict['Users'][user_id]['groups'].append(group)
+          for group in group_changes['removed']:
+            user_dict['Groups'][group].remove(user_id)
+            user_dict['Users'][user_id]['groups'].remove(group)
+
+          updatePlayersGroupsJson(players_groups=user_dict)
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(user_dict, indent=2, default=ddb_default)
+          }
+            
+
   print('Unhandled Method or Path')
-  return {
-    'statusCode': 200, #204,
-    'headers': {'Access-Control-Allow-Origin': origin},
-    'body': json.dumps({'auth_groups': auth_groups, 'event': event}, indent=4),
-  }
+  if authorize(event, auth_groups, ['admin']):
+    return {
+      'statusCode': 200, #204,
+      'headers': {'Access-Control-Allow-Origin': origin},
+      'body': json.dumps({'auth_groups': auth_groups, 'event': event}, indent=4),
+    }
+  else:
+    return {
+      'statusCode': 204,
+      'headers': {'Access-Control-Allow-Origin': origin}
+    }
+    
 # def lambda_handler() 
+
+def compareAttributes(old_attributes, new_attributes):
+  # compare old_attributes:dict to new_attributes:dict
+  # return a dict of the differences if any
+  diff = {'removed': {}, 'previous': {}, 'changed': {}}
+  if set(old_attributes.keys()) != set(new_attributes.keys()):
+    keys_diff = set(new_attributes.keys()) ^ set(old_attributes.keys())
+    for key in keys_diff:
+      if key in old_attributes:
+        diff['removed'][key] = old_attributes[key]
+      else:
+        diff['changed'][key] = new_attributes[key]
+  
+  keys_same = set(new_attributes.keys()) & set(old_attributes.keys())
+  for key in keys_same:
+    if old_attributes[key] != new_attributes[key]:
+      diff['previous'][key] = old_attributes[key]
+      diff['changed'][key] = new_attributes[key]
+
+  return diff
 
 # Process ddb result classes  
 # when dumping to json string
@@ -230,11 +383,19 @@ def key_exists(bucket, key):
       print('Something else went wrong')
       raise
 
-def authorize(membership:list, filter_groups:list ):
+def authorize(event, membership:list, filter_groups:list ):
   if not membership:
+    print(json.dumps({
+      'message': 'Not authorized',
+      'requestContext': event['requestContext']
+    }))
     return False
     raise Exception('Not Authorized')
   if not set(membership).intersection(set(filter_groups)):
+    print(json.dumps({
+      'message': 'Not authorized',
+      'requestContext': event['requestContext']
+    }))
     return False
     raise Exception('Not Authorized')
   return True
@@ -447,18 +608,29 @@ def updatePublicEventsJson():
   print('events.json updated')
 
 
-def updatePlayersGroupsJson():
-  players_groups = reduceUserAttrib(getAllUsersInAllGroups())
+def updatePlayersGroupsJson(players_groups=None):
+  if not players_groups:
+    players_groups = getAllUsersInAllGroups()
   s3 = boto3.client('s3')
   s3.put_object(
     Body=json.dumps(players_groups, indent=2, default=ddb_default),
+    Bucket=BACKEND_BUCKET,
+    Key='players_groups.json',
+    ContentType='application/json',
+    CacheControl='no-cache'
+  )
+  print('Backend players_groups.json updated')
+
+  s3.put_object(
+    Body=json.dumps(reduceUserAttrib(players_groups), indent=2, default=ddb_default),
     Bucket=S3_BUCKET,
     Key='players_groups.json',
     ContentType='application/json',
-    CacheControl='no-cache' #max-age=0, no-cache, no-store, must-revalidate',
-    # Metadata={'Cache-Control': 'max-age=0, no-cache, no-store, must-revalidate'}
+    CacheControl='no-cache'
   )
-  print('players_groups.json updated')
+  print('Public players_groups.json updated')
+  return players_groups
+  
 
 
 def updateRSVP(event_id, user_id, rsvp):
@@ -504,14 +676,21 @@ def is_after_sunday_midnight_of(given_date):
   # Compare current datetime to midnight of that Sunday
   return datetime.now() > sunday
   
+def getJsonS3(bucket_name, file_path):
+  s3 = boto3.resource('s3')
+  content_object = s3.Object(bucket_name, file_path)
+  file_content = content_object.get()['Body'].read().decode('utf-8')
+  return json.loads(file_content)
+
 def updatePlayerPools():
   from collections import defaultdict 
   import dateutil.parser as parser
 
-  s3 = boto3.resource('s3')
-  content_object = s3.Object(S3_BUCKET, 'players_groups.json')
-  file_content = content_object.get()['Body'].read().decode('utf-8')
-  players_groups = json.loads(file_content)
+  # s3 = boto3.resource('s3')
+  # content_object = s3.Object(S3_BUCKET, 'players_groups.json')
+  # file_content = content_object.get()['Body'].read().decode('utf-8')
+  # players_groups = json.loads(file_content)
+  players_groups = getJsonS3(S3_BUCKET, 'players_groups.json')
 
   players = players_groups['Groups']['player']
   organizers = players_groups['Groups']['organizer']
@@ -573,13 +752,19 @@ def updatePlayerPools():
       if 'organizer_pool' not in event or organizer_pool != set(event["organizer_pool"]):
         event_updates[event['event_id']]['organizer_pool'] = set(organizer_pool)
   
-  print(json.dumps({"event_updates": event_updates}, indent=2, default=ddb_default))
+  # print(json.dumps({"event_updates": event_updates}, indent=2, default=ddb_default))
   # input("Pause")
   for event_id, event_update in event_updates.items():
     updateEvent(event_id, event_update)
 ## end def updatePlayerPools()
 
-
+def list_groups_for_user(user_id): 
+  client = boto3.client('cognito-idp', region_name='us-east-1')
+  response = client.admin_list_groups_for_user(
+    UserPoolId=COGNITO_POOL_ID,
+    Username=user_id
+  )
+  return response['Groups']
 
 def listAllUsers():
   client = boto3.client('cognito-idp', region_name='us-east-1')
@@ -616,11 +801,11 @@ def getAllUsersInAllGroups():
       user_dict['Groups'][group['GroupName']].append(user['Username'])
   for user_id, user in user_dict['Users'].items():
     # user_dict['Users'][user_id]['groups'] = list(user_dict['Users'][user_id]['groups']) in user_dict['Users']:
-    for attrib in user["Attributes"]:
+    for attrib in user['Attributes']:
       user_dict['Users'][user_id]['attrib'][attrib['Name']] = attrib['Value']
   return user_dict
 
-def reduceUserAttrib(user_dict):
+def reduceUserAttrib(user_dict, admin=False):
   users = {'Users': {}, 'Groups': user_dict['Groups']}
   for user_id, user in user_dict['Users'].items():
     try:
@@ -629,6 +814,8 @@ def reduceUserAttrib(user_dict):
         'attrib': {
           'given_name': user['attrib']['given_name']
       } }
+      if admin:
+        users['Users'][user_id]['attrib'] = user['attrib']
     except:
       print(json.dumps(user, indent=2, default=ddb_default))
       quit()
@@ -639,7 +826,8 @@ def reduceUserAttrib(user_dict):
 
 if __name__ == '__main__':
 
-  updatePlayerPools()
+  # updatePlayerPools()
+  print(json.dumps(list_groups_for_user('34f8c488-0061-70bb-a6bd-ca58ce273d9c'), indent=2, default=ddb_default))
   quit()
 
   # import dateutil.parser as parser
@@ -677,11 +865,13 @@ if __name__ == '__main__':
   # export s3_bucket=cdkstack-bucketdevff8a9acd-pine3ubqpres
   # export table_name=game_events_dev      
   # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue_dev 
+  # export backend_bucket=dev-cubes-and-cardboard-backend
 
   ## Prod:
   # export s3_bucket=cdkstack-bucket83908e77-7tr0zgs93uwh
   # export table_name=game_events     
   # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue
+  # export backend_bucket=prod-cubes-and-cardboard-backend
   
   updatePublicEventsJson()
   updatePlayersGroupsJson()
@@ -706,3 +896,19 @@ if __name__ == '__main__':
   #     pass
   #   case 'DELETE':
   #     pass
+
+
+
+# /players	
+#   Is admin:
+#     Retrieve from backend bucket
+#     content_object = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+#   Else:
+#     Retrieve from public bucket
+#     content_object = getJsonS3(S3_BUCKET, 'players_groups.json')
+
+# Update from existing JSON Cache
+
+# Full update from Cognito
+# def updatePlayersGroupsJson():
+#   players_groups = reduceUserAttrib(getAllUsersInAllGroups())
