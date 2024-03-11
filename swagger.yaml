@@ -400,43 +400,43 @@ paths:
         passthroughBehavior: when_no_match
         type: mock
   /event/rsvp:
-    get:
-      tags:
-        - events
-      summary: Add RSVP
-      description: Add RSVP
-      operationId: updateRsvp
-      x-amazon-apigateway-request-validator: params-headers
-      parameters:
-        - name: date
-          in: query
-          description: Event date mm/dd/yyyy
-          required: true
-          style: form
-          explode: true
-          schema:
-            type: string
-        - name: name
-          in: query
-          description: Player name
-          required: true
-          style: form
-          explode: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Get event info
-          headers:
-            Access-Control-Allow-Origin:
-              type: string
-        "400":
-          description: "invalid input, object invalid"
-      x-amazon-apigateway-integration:
-        uri:
-          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
-        httpMethod: POST
-        type: aws_proxy
+    # get:
+    #   tags:
+    #     - events
+    #   summary: Add RSVP
+    #   description: Add RSVP
+    #   operationId: updateRsvp
+    #   x-amazon-apigateway-request-validator: params-headers
+    #   parameters:
+    #     - name: date
+    #       in: query
+    #       description: Event date mm/dd/yyyy
+    #       required: true
+    #       style: form
+    #       explode: true
+    #       schema:
+    #         type: string
+    #     - name: name
+    #       in: query
+    #       description: Player name
+    #       required: true
+    #       style: form
+    #       explode: true
+    #       schema:
+    #         type: string
+    #   responses:
+    #     "200":
+    #       description: Get event info
+    #       headers:
+    #         Access-Control-Allow-Origin:
+    #           type: string
+    #     "400":
+    #       description: "invalid input, object invalid"
+    #   x-amazon-apigateway-integration:
+    #     uri:
+    #       Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+    #     httpMethod: POST
+    #     type: aws_proxy
     post:
       tags:
         - events
@@ -559,9 +559,131 @@ paths:
       description: |
         List game knights
       operationId: listPlayers
+      x-amazon-apigateway-request-validator: params-headers
+      parameters:
+        - name: refresh
+          in: query
+          description: Full Refresh from Cognito
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: list all players
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+
+  /player:
+    post:
+      tags:
+        - players
+      summary: Create new player
+      description: Create new player
+      x-amazon-apigateway-request-validator: body-headers
+      operationId: createPlayer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - given_name
+                - email
+                - groups
+              type: object
+              properties:
+                given_name:
+                  type: string
+                family_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                groups:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: player created
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+    put:
+      tags:
+        - players
+      summary: Update existing player
+      description: Update existing player
+      x-amazon-apigateway-request-validator: body-headers
+      operationId: updatePlayer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - user_id
+                - given_name
+                - email
+                - groups
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                given_name:
+                  type: string
+                family_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                groups:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: player created
         "400":
           description: bad input parameter
       x-amazon-apigateway-integration:

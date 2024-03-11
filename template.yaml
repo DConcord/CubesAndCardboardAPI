@@ -92,7 +92,16 @@ Resources:
         - Key: Name
           Value: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
         - Key: Owner
-          Value: EventsAPI
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  # API Backend Bucket
+  BackendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${Mode}-cubes-and-cardboard-backend"
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
   ManageEventsFunction:
     Type: AWS::Serverless::Function
@@ -182,16 +191,42 @@ Resources:
             Auth:
               Authorizer: NONE
 
-        # /event/rsvp
-        GetEventRSVP:
+        # /player
+        CreatePlayer:
           Type: Api
           Properties:
             RestApiId: !Ref EventsApiGateway
-            Path: /event/rsvp
-            Method: GET
-            RequestParameters:
+            Path: /player
+            Method: POST
             Auth:
               Authorizer: CognitoPasswordless
+        UpdatePlayer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /player
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
+        PlayerOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /player
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
+        # /event/rsvp
+        # GetEventRSVP:
+        #   Type: Api
+        #   Properties:
+        #     RestApiId: !Ref EventsApiGateway
+        #     Path: /event/rsvp
+        #     Method: GET
+        #     RequestParameters:
+        #     Auth:
+        #       Authorizer: CognitoPasswordless
         PostEventRSVP:
           Type: Api
           Properties:
@@ -225,6 +260,7 @@ Resources:
           table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
           s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
           sqs_url: !Ref BggPictureSqsQueue
+          backend_bucket: !Ref BackendBucket
 
       Policies:
         - DynamoDBCrudPolicy:
@@ -233,6 +269,8 @@ Resources:
             QueueName: !GetAtt BggPictureSqsQueue.QueueName
         - S3CrudPolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+        - S3CrudPolicy:
+            BucketName: !Ref BackendBucket
           # Allow cognito pool ListUsers
         - Statement:
             - Effect: Allow
@@ -240,7 +278,12 @@ Resources:
                 - cognito-idp:ListUsers
                 - cognito-idp:ListUsersInGroup
                 - cognito-idp:ListGroups
-
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminCreateUser
+                - cognito-idp:AdminAddUserToGroup
+                - cognito-idp:AdminRemoveUserFromGroup
+                - cognito-idp:AdminUpdateUserAttributes
+                - cognito-idp:AdminDeleteUserAttributes
               Resource: !Ref CognitoUserPoolArn
 
   RetrieveBGGImageFunction:
@@ -287,6 +330,7 @@ Outputs:
     Value: !GetAtt EventsApiGateway.RootResourceId
     Export:
       Name: !Sub "EventsApiGateway-RootResourceId-${Mode}"
-
   SQSUrl:
     Value: !Ref BggPictureSqsQueue
+  BackendBucket:
+    Value: !Ref BackendBucket
