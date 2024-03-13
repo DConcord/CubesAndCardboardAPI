@@ -11,11 +11,13 @@ import os
 
 TABLE_NAME = os.environ['table_name'] # 'game_events'
 S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
-SQS_URL = os.environ['sqs_url']
+SQS_URL = "" #os.environ['sqs_url']
+SNS_TOPIC_ARN = os.environ['sns_topic']
 BACKEND_BUCKET = os.environ['backend_bucket']
 
 ALLOWED_ORIGINS = [
   'http://localhost:8080',
+  'https://events.dev.dissonantconcord.com',
   'https://eventsdev.dissonantconcord.com',
   'https://events.cubesandcardboard.net',
   'https://www.cubesandcardboard.net',
@@ -26,6 +28,7 @@ PULL_BGG_PIC = False
 
 
 def lambda_handler(event, context):
+  global PULL_BGG_PIC
   origin = '*'
   if event and 'headers' in event and event['headers'] and 'Origin' in event['headers'] and event['headers']['Origin']:
     origin = event['headers']['Origin']
@@ -75,6 +78,7 @@ def lambda_handler(event, context):
           updatePlayerPools()
           print('Event Created; Publish public events.json')
           updatePublicEventsJson()
+          print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
           if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
           return {
             'statusCode': 201,
@@ -94,6 +98,7 @@ def lambda_handler(event, context):
           updatePlayerPools()
           print('Event Modified; Publish public events.json')
           updatePublicEventsJson()
+          print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
           if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
           return {
             'statusCode': 201,
@@ -268,8 +273,8 @@ def lambda_handler(event, context):
               Username=user_id,
               UserAttributes=attrib_changes
             )
+          group_changes = {'added': [], 'removed': []}
           if set(data['groups']) != set(user_dict['Users'][user_id]['groups']):
-            group_changes = {'added': [], 'removed': []}
             client = boto3.client('cognito-idp')
             # remove user from all groups they are no longer in
             for group in user_dict['Users'][user_id]['groups']:
@@ -318,6 +323,93 @@ def lambda_handler(event, context):
             'body': json.dumps(user_dict, indent=2, default=ddb_default)
           }
             
+
+    case '/player/self':
+      match method:
+
+        # Player updating their own attributes
+        case 'PUT':
+          print("Player update own attributes")
+          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          data = json.loads(event['body'])
+          user_id = data['user_id']
+          if auth_sub != data['user_id']:
+            print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
+            return unauthorized
+          attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id', 'accessToken']]
+          attributes.append({'Name': 'sub', 'Value': user_id})
+
+          old_attributes = {attrib['Name']: attrib['Value'] for attrib in user_dict['Users'][user_id]['Attributes']}
+          new_attributes = {attrib['Name']: attrib['Value'] for attrib in attributes}
+
+          ## TEST!
+          if old_attributes['email'] == new_attributes['email']:
+            attributes.append({'Name': 'email_verified', 'Value': 'true'})
+            new_attributes['email_verified'] = 'true'
+
+          attrib_changes = []
+          if old_attributes != new_attributes:
+            diff = compareAttributes(old_attributes, new_attributes)
+            for attribute, value in diff['changed'].items():
+              attrib_changes.append({'Name': attribute, 'Value': value})
+            for attribute, value in diff['removed'].items():
+              attrib_changes.append({'Name': attribute, 'Value': ""})
+            
+            client = boto3.client('cognito-idp')
+            attrib_response = client.update_user_attributes(
+              UserAttributes=attrib_changes,
+              AccessToken=data['accessToken']
+            )
+            print(json.dumps(attrib_response, default=ddb_default))
+          # group_changes = {'added': [], 'removed': []}
+          # if set(data['groups']) != set(user_dict['Users'][user_id]['groups']):
+          #   client = boto3.client('cognito-idp')
+          #   # remove user from all groups they are no longer in
+          #   for group in user_dict['Users'][user_id]['groups']:
+          #     if group not in data['groups']:
+          #       client.admin_remove_user_from_group(
+          #         UserPoolId=COGNITO_POOL_ID,
+          #         Username=user_id,
+          #         GroupName=group
+          #       )
+          #       group_changes['removed'].append(group)
+          #   # add user to all groups they are now in
+          #   for group in data['groups']:
+          #     if group not in user_dict['Users'][user_id]['groups']:
+          #       client.admin_add_user_to_group(
+          #         UserPoolId=COGNITO_POOL_ID,
+          #         Username=user_id,
+          #         GroupName=group
+          #       )
+          #       group_changes['added'].append(group)
+          
+          # If attributes changed, update the user_dict
+          if attrib_changes != []:
+            response = client.admin_get_user(
+              UserPoolId=COGNITO_POOL_ID,
+              Username=user_id,
+            )
+            user = response
+            user['Attributes'] = user['UserAttributes']
+            del user['UserAttributes']
+            user_dict['Users'][user_id] = {'groups': user_dict['Users'][user_id]['groups'], 'attrib': {}, **user}
+            for attrib in user['Attributes']:
+              user_dict['Users'][user_id]['attrib'][attrib['Name']] = attrib['Value']
+          
+          # # If groups changed, update the user_dict
+          # for group in group_changes['added']:
+          #   user_dict['Groups'][group].append(user_id)
+          #   user_dict['Users'][user_id]['groups'].append(group)
+          # for group in group_changes['removed']:
+          #   user_dict['Groups'][group].remove(user_id)
+          #   user_dict['Users'][user_id]['groups'].remove(group)
+
+          updatePlayersGroupsJson(players_groups=user_dict)
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps({'message': 'Attributes Updated'})
+          }
 
   print('Unhandled Method or Path')
   if authorize(event, auth_groups, ['admin']):
@@ -404,16 +496,37 @@ def authorize(event, membership:list, filter_groups:list ):
 # Check whether bgg image has already been pulled and send 
 # an SQS to trigger pulling/resizing/saving it if not
 def process_bgg_id(bgg_id):
+  global PULL_BGG_PIC
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
   if not key_exists(S3_BUCKET, key):
     PULL_BGG_PIC = True
-    # send message to sqs
-    print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
-    sqs = boto3.client('sqs')
-    # queue_url = 'https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue'
-    sqs.send_message(QueueUrl=SQS_URL, MessageBody=f'{bgg_id}#{S3_BUCKET}')
-    print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
+
+    # # send message to sqs
+    # print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
+    # sqs = boto3.client('sqs')
+    # sqs.send_message(QueueUrl=SQS_URL, MessageBody=f'{bgg_id}#{S3_BUCKET}')
+    # print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
+
+    # send message to SNS
+    print(f"Sending message to SNS: f'{bgg_id}#{SNS_TOPIC_ARN}'")
+    sns = boto3.client('sns')
+    sns.publish(
+      TopicArn=SNS_TOPIC_ARN,
+      Message=f'{bgg_id}#{S3_BUCKET}',
+      MessageAttributes={
+        's3_bucket': {
+          'DataType': 'String',
+          'StringValue': S3_BUCKET
+        },
+        'bgg_id': {
+          'DataType': 'String',
+          'StringValue': str(bgg_id)
+        }
+      }
+    )
+
+
 
 def waitForBggPic(bgg_id):
    # wait for 5 seconds at most

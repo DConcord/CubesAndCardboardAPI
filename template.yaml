@@ -217,6 +217,24 @@ Resources:
             Auth:
               Authorizer: NONE
 
+        # /player/self
+        UpdatePlayerSelf:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /player/self
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
+        PlayerSelfOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /player/self
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
         # /event/rsvp
         # GetEventRSVP:
         #   Type: Api
@@ -259,18 +277,21 @@ Resources:
         Variables:
           table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
           s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
-          sqs_url: !Ref BggPictureSqsQueue
+          # sqs_url: !Ref BggPictureSqsQueue
+          sns_topic: !Ref BggPictureSnsTopic
           backend_bucket: !Ref BackendBucket
 
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref EventsTable
-        - SQSSendMessagePolicy:
-            QueueName: !GetAtt BggPictureSqsQueue.QueueName
+        # - SQSSendMessagePolicy:
+        #     QueueName: !GetAtt BggPictureSqsQueue.QueueName
         - S3CrudPolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
         - S3CrudPolicy:
             BucketName: !Ref BackendBucket
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt BggPictureSnsTopic.TopicName
           # Allow cognito pool ListUsers
         - Statement:
             - Effect: Allow
@@ -293,29 +314,42 @@ Resources:
       CodeUri: bgg_picture/
       Handler: app.lambda_handler
       Runtime: python3.12
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 30
       Events:
-        MySQSEvent:
-          Type: SQS
+        MySNSEvent:
+          Type: SNS
           Properties:
-            Queue: !GetAtt BggPictureSqsQueue.Arn
-            BatchSize: 10
+            Topic: !Ref BggPictureSnsTopic
+        # MySQSEvent:
+        #   Type: SQS
+        #   Properties:
+        #     Queue: !GetAtt BggPictureSqsQueue.Arn
+        #     BatchSize: 10
       Policies:
         - S3ReadPolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
         - S3WritePolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
-  BggPictureSqsQueue:
-    Type: AWS::SQS::Queue
+  BggPictureSnsTopic:
+    Type: AWS::SNS::Topic
     Properties:
-      QueueName: !FindInMap [EnvMap, !Ref Mode, BggPictureSqsQueueName]
+      TopicName: !Sub "BggPictureSnsTopic_${Mode}"
       Tags:
         - Key: Owner
           Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  # BggPictureSqsQueue:
+  #   Type: AWS::SQS::Queue
+  #   Properties:
+  #     QueueName: !FindInMap [EnvMap, !Ref Mode, BggPictureSqsQueueName]
+  #     Tags:
+  #       - Key: Owner
+  #         Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
 Outputs:
   EventsApiGateway:
@@ -330,7 +364,9 @@ Outputs:
     Value: !GetAtt EventsApiGateway.RootResourceId
     Export:
       Name: !Sub "EventsApiGateway-RootResourceId-${Mode}"
-  SQSUrl:
-    Value: !Ref BggPictureSqsQueue
+  # SQSUrl:
+  #   Value: !Ref BggPictureSqsQueue
+  SNSTopic:
+    Value: !Ref BggPictureSnsTopic
   BackendBucket:
     Value: !Ref BackendBucket
