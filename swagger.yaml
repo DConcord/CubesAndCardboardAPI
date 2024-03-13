@@ -635,6 +635,9 @@ paths:
                 email:
                   type: string
                   format: email
+                phone_number:
+                  type: string
+                  pattern: '(^$|^\+1[0-9]{10}$)'
                 groups:
                   type: array
                   items:
@@ -677,6 +680,9 @@ paths:
                 email:
                   type: string
                   format: email
+                phone_number:
+                  type: string
+                  pattern: '(^$|^\+1[0-9]{10}$)'
                 groups:
                   type: array
                   items:
@@ -684,6 +690,83 @@ paths:
       responses:
         "201":
           description: player created
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+
+  /player/self:
+    put:
+      tags:
+        - players
+      summary: "Update player: self"
+      description: "Update player: self"
+      x-amazon-apigateway-request-validator: body-headers
+      operationId: updatePlayerSelf
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - user_id
+                - given_name
+                - email
+                - accessToken
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                given_name:
+                  type: string
+                family_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                phone_number:
+                  type: string
+                  pattern: '(^$|^\+1[0-9]{10}$)'
+                accessToken:
+                  type: string
+      responses:
+        "201":
+          description: player updated
         "400":
           description: bad input parameter
       x-amazon-apigateway-integration:

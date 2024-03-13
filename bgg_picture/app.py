@@ -1,14 +1,55 @@
 import boto3
 from PIL import Image, ImageOps
 import requests
-# import urllib
 import xmltodict
-# import json
 import shutil
 import os
 import botocore
-# import io
+import json
 
+def lambda_handler(event, context):
+    s3 = boto3.client("s3", region_name="us-east-1")
+    for record in event['Records']:
+        if 'Sns' not in record: 
+            print(json.dumps(event))
+            continue
+
+        print(json.dumps(record))
+
+        bgg_id = record['Sns']['MessageAttributes']['bgg_id']['Value']
+        bucket = record['Sns']['MessageAttributes']['s3_bucket']['Value']
+
+        if key_exists(s3, bucket, f'{bgg_id}.png'):
+          print(f"{bgg_id}.png already exists")
+          continue
+        retrieve_bgg_image(bgg_id)
+
+        # Resize
+        img = Image.open(f"/tmp/{bgg_id}_original.png")
+        img_ratio = img.size[0]/img.size[1]
+        if img_ratio < .95 or img_ratio > 1.05:
+            img = resize_with_padding(img, (600, 600))
+        else:
+            img.thumbnail((600, 600))
+
+        print(img.size)
+        print(img.format)
+        # img.show()
+        img.save(f"/tmp/{bgg_id}.png")
+
+        # Save the image to an in-memory file
+        # in_mem_file = io.BytesIO()
+        # img.save(in_mem_file, format=img.format)
+        # in_mem_file.seek(0)
+
+        # Upload image to s3
+        # s3.upload_fileobj(
+        s3.upload_file(
+          f"/tmp/{bgg_id}.png",
+          # io.BytesIO(img),
+          bucket,
+          f"{bgg_id}.png",
+        )
 
 def key_exists(s3, bucket, key):
     try:
@@ -56,45 +97,6 @@ def retrieve_bgg_image(bgg_id):
         return bgg_image_original
 
     
-def lambda_handler(event, context):
-    s3 = boto3.client("s3", region_name="us-east-1")
-    for record in event['Records']:
-        # Retrieve (and split) bgg_id and S3 Bucket
-        body_parse = record["body"].split("#")
-        bgg_id = body_parse[0]
-        bucket = body_parse[1]
-
-        if key_exists(s3, bucket, f'{bgg_id}.png'):
-          print(f"{bgg_id}.png already exists")
-          continue
-        retrieve_bgg_image(bgg_id)
-
-        # Resize
-        img = Image.open(f"/tmp/{bgg_id}_original.png")
-        img_ratio = img.size[0]/img.size[1]
-        if img_ratio < .95 or img_ratio > 1.05:
-            img = resize_with_padding(img, (600, 600))
-        else:
-            img.thumbnail((600, 600))
-
-        print(img.size)
-        print(img.format)
-        # img.show()
-        img.save(f"/tmp/{bgg_id}.png")
-
-        # Save the image to an in-memory file
-        # in_mem_file = io.BytesIO()
-        # img.save(in_mem_file, format=img.format)
-        # in_mem_file.seek(0)
-
-        # Upload image to s3
-        # s3.upload_fileobj(
-        s3.upload_file(
-          f"/tmp/{bgg_id}.png",
-          # io.BytesIO(img),
-          bucket,
-          f"{bgg_id}.png",
-        )
 
 if __name__ == "__main__":
     # Localhost testing
