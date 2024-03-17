@@ -1,5 +1,8 @@
 version: 0.1
 prod:
+  build:
+    parameters:
+      template: ./template.yaml
   deploy:
     parameters:
       region: us-east-1
@@ -8,6 +11,9 @@ prod:
       s3_bucket: cp-sam-deploy-east1
       parameter_overrides: "Mode=prod"
 dev:
+  build:
+    parameters:
+      template: ./template.yaml
   deploy:
     parameters:
       region: us-east-1
