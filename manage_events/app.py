@@ -92,7 +92,31 @@ def lambda_handler(apiEvent, context):
         # Modify Event
         case 'PUT':
           if not authorize(apiEvent, auth_groups, ['admin']): 
-            return unauthorized
+            print('Check for Event Host')
+            data = json.loads(apiEvent['body'])
+            event = getEvent(data['event_id'])
+            if event['host'] != auth_sub:
+              print(f"WARNING: user_id '{event['host']}' is not an admin or the event host. not authorized")
+              return unauthorized
+            diff = compareAttributes(event, data)
+            # diff = {'removed': {}, 'previous': {}, 'changed': {}}
+            host_modifiable = {'game', 'bgg_id', 'player_pool', 'attending', 'not_attending'}
+            event_updates = { k: data[k] for k in host_modifiable.intersection(set(diff['changed']))}
+            if 'bgg_id' in event_updates and event_updates['bgg_id'] != 0 :
+              process_bgg_id(event_updates['bgg_id'])
+            updateEvent(data['event_id'], event_updates)
+            print(json.dumps({"host": data['host'], "updates": event_updates, "original": event}, default=ddb_default))            
+            print('Update Player Pools')
+            updatePlayerPools()
+            print('Event Modified; Publish public events.json')
+            updatePublicEventsJson()
+            print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
+            if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+            return {
+              'statusCode': 201,
+              'headers': {'Access-Control-Allow-Origin': origin},
+              'body': json.dumps({'result': 'Event Modified'})
+            }
           
           print('Modify Event')
           data = json.loads(apiEvent['body'])
@@ -214,9 +238,7 @@ def lambda_handler(apiEvent, context):
               user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
           else:
             user_dict = getJsonS3(S3_BUCKET, 'players_groups.json')
-            # user_dict = reduceUserAttrib(getAllUsersInAllGroups())  
-          # users = getAllUsersInAllGroups()
-          # user_dict = reduceUserAttrib(users)
+            
           return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -274,9 +296,8 @@ def lambda_handler(apiEvent, context):
           attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id']]
           attributes.append({'Name': 'sub', 'Value': user_id})
           for attrib in user_dict['Users'][user_id]['Attributes']:
-            if attrib['Name'] == 'email_verified':
+            if attrib['Name'] in ['email_verified', 'phone_number_verified']:
               attributes.append(attrib)
-              break
 
           old_attributes = {attrib['Name']: attrib['Value'] for attrib in user_dict['Users'][user_id]['Attributes']}
           new_attributes = {attrib['Name']: attrib['Value'] for attrib in attributes}
@@ -360,27 +381,42 @@ def lambda_handler(apiEvent, context):
           attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id', 'accessToken']]
           attributes.append({'Name': 'sub', 'Value': user_id})
           for attrib in user_dict['Users'][user_id]['Attributes']:
-            if attrib['Name'] == 'email_verified':
+            if attrib['Name'] in ['email_verified', 'phone_number_verified']:
               attributes.append(attrib)
-              break
 
           old_attributes = {attrib['Name']: attrib['Value'] for attrib in user_dict['Users'][user_id]['Attributes']}
           new_attributes = {attrib['Name']: attrib['Value'] for attrib in attributes}
 
           attrib_changes = []
+          attrib_response = None
           if old_attributes != new_attributes:
             diff = compareAttributes(old_attributes, new_attributes)
             for attribute, value in diff['changed'].items():
               attrib_changes.append({'Name': attribute, 'Value': value})
             for attribute, value in diff['removed'].items():
               attrib_changes.append({'Name': attribute, 'Value': ""})
-            
-            client = boto3.client('cognito-idp')
-            attrib_response = client.update_user_attributes(
-              UserAttributes=attrib_changes,
-              AccessToken=data['accessToken']
-            )
-            print(json.dumps(attrib_response, default=ddb_default))
+            try:
+              client = boto3.client('cognito-idp')
+              attrib_response = client.update_user_attributes(
+                UserAttributes=attrib_changes,
+                AccessToken=data['accessToken']
+              )
+              print(json.dumps(attrib_response, default=ddb_default))
+            except Exception as e:
+              print(e)
+              print(json.dumps({
+                'request': data, 
+                'old_attributes': old_attributes, 
+                'new_attributes': new_attributes, 
+                'diff': diff, 
+                'attrib_changes': attrib_changes
+              }, default=ddb_default))
+              
+              return {
+                'statusCode': 400,
+                'headers': {'Access-Control-Allow-Origin': origin},
+                'body': json.dumps({'message': 'Error updating attributes', 'error': str(e)})
+              }
           
           # If attributes changed, update the user_dict
           if attrib_changes != []:
@@ -395,12 +431,18 @@ def lambda_handler(apiEvent, context):
             for attrib in user['Attributes']:
               user_dict['Users'][user_id]['attrib'][attrib['Name']] = attrib['Value']
 
-          updatePlayersGroupsJson(players_groups=user_dict)
-          return {
-            'statusCode': 201,
-            'headers': {'Access-Control-Allow-Origin': origin},
-            'body': json.dumps({'message': 'Attributes Updated'})
-          }
+            updatePlayersGroupsJson(players_groups=user_dict)
+            return {
+              'statusCode': 201,
+              'headers': {'Access-Control-Allow-Origin': origin},
+              'body': json.dumps({'message': 'Attributes Updated', 'response': attrib_response}, indent=2, default=ddb_default)
+            }
+          else:
+            return {
+              'statusCode': 201,
+              'headers': {'Access-Control-Allow-Origin': origin},
+              'body': json.dumps({'message': 'No Changes'})
+            }
 
   print('Unhandled Method or Path')
   if authorize(apiEvent, auth_groups, ['admin']):
@@ -425,15 +467,19 @@ def compareAttributes(old_attributes, new_attributes):
     keys_diff = set(new_attributes.keys()) ^ set(old_attributes.keys())
     for key in keys_diff:
       if key in old_attributes:
-        diff['removed'][key] = old_attributes[key]
+        diff['removed'][key] = old_attributes[key] # Attr removed (not in new)
       else:
-        diff['changed'][key] = new_attributes[key]
+        diff['changed'][key] = new_attributes[key] # Attr added (new only)
   
   keys_same = set(new_attributes.keys()) & set(old_attributes.keys())
   for key in keys_same:
-    if old_attributes[key] != new_attributes[key]:
-      diff['previous'][key] = old_attributes[key]
-      diff['changed'][key] = new_attributes[key]
+    if isinstance(new_attributes[key], list):
+      if set(new_attributes[key]) != set(old_attributes[key]):
+        diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
+        diff['changed'][key] = new_attributes[key] # Modified attr value (different in new)
+    elif old_attributes[key] != new_attributes[key]:
+      diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
+      diff['changed'][key] = new_attributes[key] # Modified attr value (different in new)
 
   return diff
 
@@ -540,6 +586,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
     'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']},
   }
+  if 'status' in eventDict: modified_event['status'] = {'S': eventDict['status']}
   if 'bgg_id' in eventDict: modified_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict: modified_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: modified_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
@@ -606,7 +653,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
     'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']}
   }
-  # new_event['attending'] = new_event['registered']
+  if 'status' in eventDict: new_event['status'] = {'S': eventDict['status']}
   if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: new_event['tbd_pic'] = {'S': eventDict['tbd_pic']}

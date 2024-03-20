@@ -21,6 +21,9 @@ Parameters:
     Default: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
     Description: Cognito User Pool Arn
 
+Conditions:
+  isDev: !Equals [!Ref Mode, dev]
+
 Mappings:
   EnvMap:
     prod:
@@ -275,6 +278,7 @@ Resources:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
       Environment:
         Variables:
+          table_name_prod: !If [isDev, !ImportValue EventsTable-prod-GameKnightsEventsAPI, ""]
           table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
           s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
           # sqs_url: !Ref BggPictureSqsQueue
@@ -284,6 +288,11 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref EventsTable
+        - !If
+          - isDev
+          - DynamoDBReadPolicy:
+              TableName: !ImportValue EventsTable-prod-GameKnightsEventsAPI
+          - !Ref "AWS::NoValue"
         # - SQSSendMessagePolicy:
         #     QueueName: !GetAtt BggPictureSqsQueue.QueueName
         - S3CrudPolicy:
@@ -370,3 +379,7 @@ Outputs:
     Value: !Ref BggPictureSnsTopic
   BackendBucket:
     Value: !Ref BackendBucket
+  EventsTable:
+    Value: !Ref EventsTable
+    Export:
+      Name: !Sub "EventsTable-${Mode}-${AWS::StackName}"
