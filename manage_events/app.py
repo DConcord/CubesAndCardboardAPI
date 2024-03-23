@@ -15,6 +15,7 @@ S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
 SQS_URL = "" #os.environ['sqs_url']
 SNS_TOPIC_ARN = os.environ['sns_topic']
 BACKEND_BUCKET = os.environ['backend_bucket']
+MODE = os.environ['mode']
 
 ALLOWED_ORIGINS = [
   'http://localhost:8080',
@@ -77,6 +78,15 @@ def lambda_handler(apiEvent, context):
           if len(data['date']) <= 19:
             data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()            
           response = createEvent(data)
+          print(json.dumps({
+            'log_type': 'event',
+            'auth_sub': auth_sub,
+            'auth_type': 'admin',
+            'event_id': response['event_id'],
+            'date': data['date'],
+            'new': json.dumps(data, default=ddb_default),
+            'action': 'create',
+          }, default=ddb_default))
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Created; Publish public events.json')
@@ -99,13 +109,62 @@ def lambda_handler(apiEvent, context):
               print(f"WARNING: user_id '{event['host']}' is not an admin or the event host. not authorized")
               return unauthorized
             diff = compareAttributes(event, data)
-            # diff = {'removed': {}, 'previous': {}, 'changed': {}}
             host_modifiable = {'game', 'bgg_id', 'player_pool', 'attending', 'not_attending'}
-            event_updates = { k: data[k] for k in host_modifiable.intersection(set(diff['changed']))}
+            event_updates = { k: data[k] for k in host_modifiable.intersection(set({**diff['added'], **diff['modified']}))}
             if 'bgg_id' in event_updates and event_updates['bgg_id'] != 0 :
               process_bgg_id(event_updates['bgg_id'])
             updateEvent(data['event_id'], event_updates)
-            print(json.dumps({"host": data['host'], "updates": event_updates, "original": event}, default=ddb_default))            
+            original = {k: event[k] for k in event_updates if k in event}
+            print(json.dumps({
+              'log_type': 'event',
+              'auth_sub': auth_sub,
+              'auth_type': 'host',
+              'event_id': data['event_id'],
+              'date': data['date'],
+              'previous': json.dumps(original, default=ddb_default),
+              'new': json.dumps(event_updates, default=ddb_default),
+              'action': 'update',
+            }, default=ddb_default))
+            all_rsvp = set()
+            no_change = set()
+            for rsvp in ['attending', 'not_attending']:
+              if rsvp in original:
+                all_rsvp = all_rsvp.union(original[rsvp])
+              if rsvp in event_updates:
+                all_rsvp = all_rsvp.union(event_updates[rsvp])
+              if rsvp in original and rsvp in event_updates:
+                no_change = no_change.union(original[rsvp].intersection(event_updates[rsvp]))
+            
+            if all_rsvp:
+              rsvp_change = all_rsvp - no_change
+              changes = {}
+              for player in rsvp_change:
+                if player in original['attending']:
+                  if player in event_updates['not_attending']:
+                    changes[player] = {'rsvp': 'not_attending', 'action': 'update'}
+                  else:
+                    changes[player] = {'rsvp': 'attending', 'action': 'delete'}
+                elif player in original['not_attending']:
+                  if player in event_updates['attending']:
+                    changes[player] = {'rsvp': 'attending', 'action': 'update'}
+                  else:
+                    changes[player] = {'rsvp': 'not_attending', 'action': 'delete'}
+                elif player in event_updates['attending']:
+                    changes[player] = {'rsvp': 'attending', 'action': 'add'}
+                elif player in event_updates['not_attending']:
+                    changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
+              for player, rsvp in changes.items():
+                print(json.dumps({
+                  'log_type': 'rsvp',
+                  'auth_sub': auth_sub,
+                  'auth_type': 'admin',
+                  'event_id': data['event_id'],
+                  'date': current_event['date'],
+                  'user_id': player,
+                  'action': rsvp['action'],
+                  'rsvp': rsvp['rsvp'],
+                }))
+            # print(json.dumps({"host": data['host'], "updates": event_updates, "original": event}, default=ddb_default))            
             print('Update Player Pools')
             updatePlayerPools()
             print('Event Modified; Publish public events.json')
@@ -120,9 +179,63 @@ def lambda_handler(apiEvent, context):
           
           print('Modify Event')
           data = json.loads(apiEvent['body'])
+          current_event = getEvent(data['event_id'])
           if len(data['date']) <= 19:
             data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()
           response = modifyEvent(data)
+          diff = compareAttributes(current_event, data)
+          event_prev = {**diff['removed'], **diff['previous']}
+          event_new = {**diff['added'], **diff['modified']}
+          print(json.dumps({
+            'log_type': 'event',
+            'auth_sub': auth_sub,
+            'auth_type': 'admin',
+            'event_id': data['event_id'],
+            'date': current_event['date'],
+            'previous': json.dumps(event_prev, default=ddb_default),
+            'new': json.dumps(event_new, default=ddb_default),
+            'action': 'modify',
+          }, default=ddb_default))
+          all_rsvp = set()
+          no_change = set()
+          for rsvp in ['attending', 'not_attending']:
+            if rsvp in event_prev:
+              all_rsvp = all_rsvp.union(event_prev[rsvp])
+            if rsvp in event_new:
+              all_rsvp = all_rsvp.union(event_new[rsvp])
+            if rsvp in event_prev and rsvp in event_new:
+              no_change = no_change.union(event_prev[rsvp].intersection(event_new[rsvp]))
+          
+          if all_rsvp:
+            rsvp_change = all_rsvp - no_change
+            changes = {}
+            for player in rsvp_change:
+              if player in event_prev['attending']:
+                if player in event_new['not_attending']:
+                  changes[player] = {'rsvp': 'not_attending', 'action': 'update'}
+                else:
+                  changes[player] = {'rsvp': 'attending', 'action': 'delete'}
+              elif player in event_prev['not_attending']:
+                if player in event_new['attending']:
+                  changes[player] = {'rsvp': 'attending', 'action': 'update'}
+                else:
+                  changes[player] = {'rsvp': 'not_attending', 'action': 'delete'}
+              elif player in event_new['attending']:
+                  changes[player] = {'rsvp': 'attending', 'action': 'add'}
+              elif player in event_new['not_attending']:
+                  changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
+            for player, rsvp in changes.items():
+              print(json.dumps({
+                'log_type': 'rsvp',
+                'auth_sub': auth_sub,
+                'auth_type': 'admin',
+                'event_id': data['event_id'],
+                'date': current_event['date'],
+                'user_id': player,
+                'action': rsvp['action'],
+                'rsvp': rsvp['rsvp'],
+              }))
+
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Modified; Publish public events.json')
@@ -142,7 +255,17 @@ def lambda_handler(apiEvent, context):
           
           print('Delete Event')
           event_id = apiEvent['queryStringParameters']['event_id'] 
+          current_event = getEvent(event_id)
           response = deleteEvent(event_id)
+          print(json.dumps({
+            'log_type': 'event',
+            'auth_sub': auth_sub,
+            'auth_type': 'admin',
+            'event_id': event_id,
+            'date': current_event['date'],
+            'previous': json.dumps(current_event, default=ddb_default),
+            'action': 'delete',
+          }, default=ddb_default))
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Deleted; Publish public events.json')
@@ -154,7 +277,10 @@ def lambda_handler(apiEvent, context):
           }
         
     case '/event/rsvp':
-
+      rsvp_change = {
+        'attending': 'not_attending',
+        'not_attending': 'attending'
+      }
       # Add RSVP
       match method:
         case 'POST':
@@ -163,10 +289,25 @@ def lambda_handler(apiEvent, context):
           if auth_sub != data['user_id']:
             print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
             return unauthorized
+          current_event = getEvent(data['event_id'], attributes=['date', 'attending', 'not_attending'])
           response = updateRSVP(data['event_id'], data['user_id'], data['rsvp'])
+          if  data['user_id'] in current_event[rsvp_change[data['rsvp']]]:
+            action = 'update'
+          else:
+            action = 'add'
+          print(json.dumps({
+            'log_type': 'rsvp',
+            'auth_sub': auth_sub,
+            'auth_type': 'self',
+            'event_id': data['event_id'],
+            'date': current_event['date'],
+            'user_id': data['user_id'],
+            'action': action,
+            'rsvp': data['rsvp'],
+          }))
           print('Update Player Pools')
           updatePlayerPools()
-          print('Event Deleted; Publish public events.json')
+          print('Publish public events.json')
           updatePublicEventsJson()
           return {
             'statusCode': 201,
@@ -182,7 +323,18 @@ def lambda_handler(apiEvent, context):
           if auth_sub != data['user_id']:
             print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
             return unauthorized
+          current_event = getEvent(data['event_id'], attributes=['date'])
           response = deleteRSVP(data['event_id'], data['user_id'], data['rsvp'])
+          print(json.dumps({
+            'log_type': 'rsvp',
+            'auth_sub': auth_sub,
+            'auth_type': 'self',
+            'event_id': data['event_id'],
+            'date': current_event['date'],
+            'user_id': data['user_id'],
+            'action': 'delete',
+            'rsvp': data['rsvp'],
+          }))
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Deleted; Publish public events.json')
@@ -212,7 +364,7 @@ def lambda_handler(apiEvent, context):
             dateLte = None
           
           events = getEvents(dateGte = dateGte, dateLte = dateLte)
-          if not authorize(apiEvent, auth_groups, ['admin']):
+          if not authorize(apiEvent, auth_groups, ['admin'], log_if_false=False):
             events = [event for event in events if not (event['format'] == 'Private' and auth_sub not in event['player_pool'])]
           return {
             'statusCode': 200,
@@ -278,6 +430,14 @@ def lambda_handler(apiEvent, context):
                 Username=user_id,
                 GroupName=group
             )
+          print(json.dumps({
+            'log_type': 'player',
+            'auth_sub': auth_sub,
+            'auth_type': 'admin',
+            'user_id': user_id,
+            'action': 'create',
+            'attrib': '',
+          }))
           updatePlayersGroupsJson(players_groups=user_dict)
           return {
             'statusCode': 201,
@@ -301,13 +461,17 @@ def lambda_handler(apiEvent, context):
 
           old_attributes = {attrib['Name']: attrib['Value'] for attrib in user_dict['Users'][user_id]['Attributes']}
           new_attributes = {attrib['Name']: attrib['Value'] for attrib in attributes}
+          changes = []
           attrib_changes = []
           if old_attributes != new_attributes:
             diff = compareAttributes(old_attributes, new_attributes)
-            for attribute, value in diff['changed'].items():
+            # for attribute, value in diff['changed'].items():
+            for attribute, value in {**diff['added'], **diff['modified']}.items():
               attrib_changes.append({'Name': attribute, 'Value': value})
+              changes.append(attribute)
             for attribute, value in diff['removed'].items():
               attrib_changes.append({'Name': attribute, 'Value': ""})
+              changes.append(attribute)
             
             client = boto3.client('cognito-idp')
             attrib_response = client.admin_update_user_attributes(
@@ -317,6 +481,7 @@ def lambda_handler(apiEvent, context):
             )
           group_changes = {'added': [], 'removed': []}
           if set(data['groups']) != set(user_dict['Users'][user_id]['groups']):
+            changes.append('groups')
             client = boto3.client('cognito-idp')
             # remove user from all groups they are no longer in
             for group in user_dict['Users'][user_id]['groups']:
@@ -327,6 +492,7 @@ def lambda_handler(apiEvent, context):
                   GroupName=group
                 )
                 group_changes['removed'].append(group)
+                changes.append(f'-{group}')
             # add user to all groups they are now in
             for group in data['groups']:
               if group not in user_dict['Users'][user_id]['groups']:
@@ -336,6 +502,7 @@ def lambda_handler(apiEvent, context):
                   GroupName=group
                 )
                 group_changes['added'].append(group)
+                changes.append(f'+{group}')
           
           # If attributes changed, update the user_dict
           if attrib_changes != []:
@@ -358,6 +525,14 @@ def lambda_handler(apiEvent, context):
             user_dict['Groups'][group].remove(user_id)
             user_dict['Users'][user_id]['groups'].remove(group)
 
+          print(json.dumps({
+            'log_type': 'player',
+            'auth_sub': auth_sub,
+            'auth_type': 'admin',
+            'user_id': user_id,
+            'action': 'update',
+            'attrib': ', '.join(changes),
+          }))
           updatePlayersGroupsJson(players_groups=user_dict)
           return {
             'statusCode': 201,
@@ -391,7 +566,8 @@ def lambda_handler(apiEvent, context):
           attrib_response = None
           if old_attributes != new_attributes:
             diff = compareAttributes(old_attributes, new_attributes)
-            for attribute, value in diff['changed'].items():
+            # for attribute, value in diff['changed'].items():
+            for attribute, value in {**diff['added'], **diff['modified']}.items():
               attrib_changes.append({'Name': attribute, 'Value': value})
             for attribute, value in diff['removed'].items():
               attrib_changes.append({'Name': attribute, 'Value': ""})
@@ -444,6 +620,68 @@ def lambda_handler(apiEvent, context):
               'body': json.dumps({'message': 'No Changes'})
             }
 
+    case '/activitylogs':
+      match method:
+
+        # Get activity logs. Admin only
+        case 'GET':
+          
+          if not authorize(apiEvent, auth_groups, ['admin']):
+            return unauthorized
+          
+          data = apiEvent['queryStringParameters']
+          if data and 'startTime' in data and data['startTime']:
+            startTime = int(data['startTime'])
+          else:
+            delta = timedelta(hours=1)
+            # delta = timedelta(minutes=10)
+            startTime = int((datetime.now() - delta).timestamp())
+          
+          # only go back as far as 3/21/24 ~12:37pm
+          if startTime < 1711046194: startTime = 1711046194
+          
+          if data and 'endTime' in data and data['endTime']:
+            endTime = int(data['endTime'])
+          else:
+            endTime = int(datetime.now().timestamp())
+
+          client = boto3.client('logs')
+          # query = "fields @timestamp, @message | parse @message \"username: * ClinicID: * nodename: *\" as username, ClinicID, nodename | filter ClinicID = 7667 and username='simran+test@example.com'"
+          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp"] | sort @timestamp desc'
+          log_group = f'/aws/lambda/manage_events_{MODE}'
+          start_query_response = client.start_query(
+              logGroupName=log_group,
+              startTime=startTime,
+              endTime=endTime,
+              queryString=query,
+              limit=100
+          )
+          query_id = start_query_response['queryId']
+          response = None
+          while response == None or response['status'] == 'Running':
+              print('Waiting for query to complete ...')
+              time.sleep(1)
+              response = client.get_query_results(
+                  queryId=query_id
+              )
+          from copy import deepcopy
+          _response = deepcopy(response)
+          _response['results'] = []
+          for result in response['results']:
+            _result = {}
+            for field in result:
+              if field['field'] in ['previous', 'new']:
+                field['value'] = json.loads(field['value'])
+              _result[field['field']] = field['value']
+            _response['results'].append(_result)
+          # response['results'] = logs
+          return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(_response, default=ddb_default),
+          }
+          
+
   print('Unhandled Method or Path')
   if authorize(apiEvent, auth_groups, ['admin']):
     return {
@@ -462,24 +700,25 @@ def lambda_handler(apiEvent, context):
 def compareAttributes(old_attributes, new_attributes):
   # compare old_attributes:dict to new_attributes:dict
   # return a dict of the differences if any
-  diff = {'removed': {}, 'previous': {}, 'changed': {}}
+  diff = {'removed': {}, 'added': {}, 'previous': {}, 'modified': {}}#, 'changed': {}}
   if set(old_attributes.keys()) != set(new_attributes.keys()):
     keys_diff = set(new_attributes.keys()) ^ set(old_attributes.keys())
     for key in keys_diff:
       if key in old_attributes:
         diff['removed'][key] = old_attributes[key] # Attr removed (not in new)
       else:
-        diff['changed'][key] = new_attributes[key] # Attr added (new only)
+        diff['added'][key] = new_attributes[key] # Attr added (new only)
+        # diff['changed'][key] = new_attributes[key] # Attr added (new only)
   
   keys_same = set(new_attributes.keys()) & set(old_attributes.keys())
   for key in keys_same:
     if isinstance(new_attributes[key], list):
       if set(new_attributes[key]) != set(old_attributes[key]):
         diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
-        diff['changed'][key] = new_attributes[key] # Modified attr value (different in new)
+        diff['modified'][key] = new_attributes[key] # Modified attr value (different in new)
     elif old_attributes[key] != new_attributes[key]:
       diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
-      diff['changed'][key] = new_attributes[key] # Modified attr value (different in new)
+      diff['modified'][key] = new_attributes[key] # Modified attr value (different in new)
 
   return diff
 
@@ -512,19 +751,21 @@ def key_exists(bucket, key):
       print('Something else went wrong')
       raise
 
-def authorize(apiEvent, membership:list, filter_groups:list ):
+def authorize(apiEvent, membership:list, filter_groups:list, log_if_false=True ):
   if not membership:
-    print(json.dumps({
-      'message': 'Not authorized',
-      'requestContext': apiEvent['requestContext']
-    }))
+    if log_if_false:
+      print(json.dumps({
+        'message': 'Not authorized',
+        'requestContext': apiEvent['requestContext']
+      }))
     return False
     raise Exception('Not Authorized')
   if not set(membership).intersection(set(filter_groups)):
-    print(json.dumps({
-      'message': 'Not authorized',
-      'requestContext': apiEvent['requestContext']
-    }))
+    if log_if_false:
+      print(json.dumps({
+        'message': 'Not authorized',
+        'requestContext': apiEvent['requestContext']
+      }))
     return False
     raise Exception('Not Authorized')
   return True
@@ -574,7 +815,61 @@ def waitForBggPic(bgg_id):
       print(f"Waiting for {bgg_id}.png to be pulled...")
       time.sleep(.25)
 
-def modifyEvent(eventDict, process_bgg_id_image=True):                
+
+def createEvent(eventDict, process_bgg_id_image=True):
+  from copy import deepcopy
+  eventDict = deepcopy(eventDict)    
+  event_id = eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())  # temp: allow supplying event_id for "Transfer" action. Remove on client side for "Clone"
+  new_event = {
+    'event_id': {'S': event_id},
+    'event_type': {'S': eventDict['event_type'] if 'event_type' in eventDict else 'GameKnight'},
+    'date': {'S': eventDict['date']},
+    'host': {'S': eventDict['host']},
+    'organizer': {'S': eventDict['organizer']} if 'organizer' in eventDict else {'S': ''},
+    'format': {'S': eventDict['format']},
+    'game': {'S': eventDict['game']},
+    'attending': {'SS': eventDict['attending']},
+    'player_pool': {'SS': eventDict['player_pool']}
+  }
+  if 'status' in eventDict: new_event['status'] = {'S': eventDict['status']}
+  if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
+  if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
+  if 'tbd_pic' in eventDict: new_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  # if 'migrated' in eventDict: new_event['migrated'] = {'BOOL': eventDict['migrated']}
+  if 'not_attending' in eventDict: 
+    new_event['not_attending'] = {'SS': eventDict['not_attending']}
+  else :
+    new_event['not_attending'] = {'SS': ['placeholder']}
+
+  # Make sure 'placeholder' is in not_attending and attending sets (will be deduplicated)
+  if 'placeholder' not in new_event['not_attending']['SS']:
+    new_event['not_attending']['SS'].append('placeholder')
+  if 'placeholder' not in new_event['attending']['SS']:
+    new_event['attending']['SS'].append('placeholder')
+  if 'placeholder' not in new_event['player_pool']['SS']:
+    new_event['player_pool']['SS'].append('placeholder')
+
+  # Start processing download for new game image if necessary
+  if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id']:
+    process_bgg_id(eventDict['bgg_id'])
+
+  ddb = boto3.client('dynamodb', region_name='us-east-1')
+  response = ddb.put_item(
+    TableName=TABLE_NAME,
+    Item={**new_event},
+    # Fail if item.event_id already exists
+    ConditionExpression='attribute_not_exists(event_id)',
+  )
+  response['event_id'] = event_id
+  print('Event Created')
+
+  return response
+## def createEvent(eventDict) 
+
+
+def modifyEvent(eventDict, process_bgg_id_image=True):   
+  from copy import deepcopy
+  eventDict = deepcopy(eventDict)             
   modified_event = {
     'event_id': {'S': eventDict['event_id']},
     'event_type': {'S': eventDict['event_type']},
@@ -622,6 +917,8 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   
 ## Update specific attributes of an event
 def updateEvent(event_id, event_updates):
+  from copy import deepcopy
+  event_updates = deepcopy(event_updates)
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
   table = ddb.Table(TABLE_NAME)
   response = table.update_item(
@@ -638,54 +935,6 @@ def updateEvent(event_id, event_updates):
   print(f'Event {event_id} updated')
   return response
 ## def updateEvent(event_id, event_updates)
-
-
-def createEvent(eventDict, process_bgg_id_image=True):
-        
-  new_event = {
-    'event_id': {'S': eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())}, # temp: allow supplying event_id
-    'event_type': {'S': eventDict['event_type'] if 'event_type' in eventDict else 'GameKnight'},
-    'date': {'S': eventDict['date']},
-    'host': {'S': eventDict['host']},
-    'organizer': {'S': eventDict['organizer']} if 'organizer' in eventDict else {'S': ''},
-    'format': {'S': eventDict['format']},
-    'game': {'S': eventDict['game']},
-    'attending': {'SS': eventDict['attending']},
-    'player_pool': {'SS': eventDict['player_pool']}
-  }
-  if 'status' in eventDict: new_event['status'] = {'S': eventDict['status']}
-  if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
-  if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
-  if 'tbd_pic' in eventDict: new_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
-  # if 'migrated' in eventDict: new_event['migrated'] = {'BOOL': eventDict['migrated']}
-  if 'not_attending' in eventDict: 
-    new_event['not_attending'] = {'SS': eventDict['not_attending']}
-  else :
-    new_event['not_attending'] = {'SS': ['placeholder']}
-
-  # Make sure 'placeholder' is in not_attending and attending sets (will be deduplicated)
-  if 'placeholder' not in new_event['not_attending']['SS']:
-    new_event['not_attending']['SS'].append('placeholder')
-  if 'placeholder' not in new_event['attending']['SS']:
-    new_event['attending']['SS'].append('placeholder')
-  if 'placeholder' not in new_event['player_pool']['SS']:
-    new_event['player_pool']['SS'].append('placeholder')
-
-  # Start processing download for new game image if necessary
-  if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id']:
-    process_bgg_id(eventDict['bgg_id'])
-
-  ddb = boto3.client('dynamodb', region_name='us-east-1')
-  response = ddb.put_item(
-    TableName=TABLE_NAME,
-    Item={**new_event},
-    # Fail if item.event_id already exists
-    ConditionExpression='attribute_not_exists(event_id)',
-  )
-  print('Event Created')
-
-  return response
-## def createEvent(eventDict) 
 
 
 def deleteEvent(event_id):   
@@ -727,7 +976,6 @@ def getEvent(event_id, attributes=[], as_json=False):
      return json.dumps(response['Items'][0], default=ddb_default)
   else:
     return response['Items'][0]
-
 
 
 def getEvents(dateGte = None, dateLte = None, event_type='GameKnight', as_json=False):   
@@ -1022,11 +1270,17 @@ def updateDates():
       print("no change: ", event['date'], "\n")
 
 if __name__ == '__main__':
-  # getEvent(event_id='79abae75-fa45-4a0b-9743-88cb88ac62f2', attributes=['date'])
-  # event = getEvent(event_id='79abae75-fa45-4a0b-9743-88cb88ac62f2', attributes=['date'])
-  # print(json.dumps(event, indent=2, default=ddb_default))
-  # quit()
-  updateDates()
+
+              # startTime=int((datetime.today() - timedelta(hours=5)).timestamp()),
+              # endTime=int(datetime.now().timestamp()),
+  # print (((datetime.today() - timedelta(hours=5)).timestamp()), (datetime.now().timestamp()))
+  # print (int((datetime.today() - timedelta(hours=5)).timestamp()), int(datetime.now().timestamp()))
+
+  print(int(datetime.now().timestamp()))
+
+  # print(timedelta(hours=1))
+  # print(((datetime.now() - timedelta(hours=1)).isoformat()), (datetime.now().isoformat()))
+  # print(int((datetime.now() - timedelta(hours=1)).timestamp()), int(datetime.now().timestamp()))
   quit()
 
 

@@ -239,15 +239,6 @@ Resources:
               Authorizer: NONE
 
         # /event/rsvp
-        # GetEventRSVP:
-        #   Type: Api
-        #   Properties:
-        #     RestApiId: !Ref EventsApiGateway
-        #     Path: /event/rsvp
-        #     Method: GET
-        #     RequestParameters:
-        #     Auth:
-        #       Authorizer: CognitoPasswordless
         PostEventRSVP:
           Type: Api
           Properties:
@@ -274,10 +265,30 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+
+        # /activitylogs
+        GetActivityLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /activitylogs
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        ActivityLogsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /activitylogs
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
       Environment:
         Variables:
+          mode: !Ref Mode
           table_name_prod: !If [isDev, !ImportValue EventsTable-prod-GameKnightsEventsAPI, ""]
           table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
           s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
@@ -315,6 +326,15 @@ Resources:
                 - cognito-idp:AdminUpdateUserAttributes
                 - cognito-idp:AdminDeleteUserAttributes
               Resource: !Ref CognitoUserPoolArn
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:StartQuery
+                - logs:StopQuery
+                - logs:GetQueryResults
+              Resource:
+                - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/manage_events_${Mode}:*"
+                - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/manage_events_${Mode}:log-stream:*"
 
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function
