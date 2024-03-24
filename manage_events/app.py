@@ -139,19 +139,19 @@ def lambda_handler(apiEvent, context):
               rsvp_change = all_rsvp - no_change
               changes = {}
               for player in rsvp_change:
-                if player in original['attending']:
-                  if player in event_updates['not_attending']:
+                if 'attending' in original and player in original['attending']:
+                  if 'not_attending' in event_updates and player in event_updates['not_attending']:
                     changes[player] = {'rsvp': 'not_attending', 'action': 'update'}
                   else:
                     changes[player] = {'rsvp': 'attending', 'action': 'delete'}
-                elif player in original['not_attending']:
-                  if player in event_updates['attending']:
+                elif 'not_attending' in original and player in original['not_attending']:
+                  if 'attending' in event_updates and player in event_updates['attending']:
                     changes[player] = {'rsvp': 'attending', 'action': 'update'}
                   else:
                     changes[player] = {'rsvp': 'not_attending', 'action': 'delete'}
-                elif player in event_updates['attending']:
+                elif 'attending' in event_updates and player in event_updates['attending']:
                     changes[player] = {'rsvp': 'attending', 'action': 'add'}
-                elif player in event_updates['not_attending']:
+                elif 'not_attending' in event_updates and player in event_updates['not_attending']:
                     changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
               for player, rsvp in changes.items():
                 print(json.dumps({
@@ -210,19 +210,19 @@ def lambda_handler(apiEvent, context):
             rsvp_change = all_rsvp - no_change
             changes = {}
             for player in rsvp_change:
-              if player in event_prev['attending']:
-                if player in event_new['not_attending']:
+              if 'attending' in event_prev and player in event_prev['attending']:
+                if 'not_attending' in event_new and player in event_new['not_attending']:
                   changes[player] = {'rsvp': 'not_attending', 'action': 'update'}
                 else:
                   changes[player] = {'rsvp': 'attending', 'action': 'delete'}
-              elif player in event_prev['not_attending']:
-                if player in event_new['attending']:
+              elif 'not_attending' in event_prev and player in event_prev['not_attending']:
+                if 'attending' in event_new and player in event_new['attending']:
                   changes[player] = {'rsvp': 'attending', 'action': 'update'}
                 else:
                   changes[player] = {'rsvp': 'not_attending', 'action': 'delete'}
-              elif player in event_new['attending']:
+              elif 'attending' in event_new and player in event_new['attending']:
                   changes[player] = {'rsvp': 'attending', 'action': 'add'}
-              elif player in event_new['not_attending']:
+              elif 'not_attending' in event_new and player in event_new['not_attending']:
                   changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
             for player, rsvp in changes.items():
               print(json.dumps({
@@ -647,7 +647,7 @@ def lambda_handler(apiEvent, context):
 
           client = boto3.client('logs')
           # query = "fields @timestamp, @message | parse @message \"username: * ClinicID: * nodename: *\" as username, ClinicID, nodename | filter ClinicID = 7667 and username='simran+test@example.com'"
-          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp"] | sort @timestamp desc'
+          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp"] and event_id != "a3c80692-17a3-4f47-988b-61ff72d2a044" | sort @timestamp desc'
           log_group = f'/aws/lambda/manage_events_{MODE}'
           start_query_response = client.start_query(
               logGroupName=log_group,
@@ -1270,13 +1270,20 @@ def updateDates():
       print("no change: ", event['date'], "\n")
 
 if __name__ == '__main__':
+  
+  all_events = getEvents()
+  for event in all_events:
+    if 'attending' not in event:
+      print(json.dumps(event, indent=2, default=ddb_default))
+    if 'not_attending' not in event:
+      print(json.dumps(event, indent=2, default=ddb_default))
 
               # startTime=int((datetime.today() - timedelta(hours=5)).timestamp()),
               # endTime=int(datetime.now().timestamp()),
   # print (((datetime.today() - timedelta(hours=5)).timestamp()), (datetime.now().timestamp()))
   # print (int((datetime.today() - timedelta(hours=5)).timestamp()), int(datetime.now().timestamp()))
 
-  print(int(datetime.now().timestamp()))
+  # print(int(datetime.now().timestamp()))
 
   # print(timedelta(hours=1))
   # print(((datetime.now() - timedelta(hours=1)).isoformat()), (datetime.now().isoformat()))
@@ -1328,7 +1335,8 @@ if __name__ == '__main__':
   # export s3_bucket=cdkstack-bucketdevff8a9acd-pine3ubqpres
   # export table_name=game_events_dev      
   # export backend_bucket=dev-cubes-and-cardboard-backend
-  # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_dev    
+  # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_dev   
+  # export mode=dev
 
   # # Prod:
   # # export sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/bgg_picture_sqs_queue
@@ -1336,6 +1344,7 @@ if __name__ == '__main__':
   # export table_name=game_events
   # export backend_bucket=prod-cubes-and-cardboard-backend
   # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_prod 
+  # export mode=prod
   
   updatePublicEventsJson()
   updatePlayersGroupsJson()
