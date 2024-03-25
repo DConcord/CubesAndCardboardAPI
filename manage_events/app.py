@@ -1348,30 +1348,3 @@ if __name__ == '__main__':
   
   updatePublicEventsJson()
   updatePlayersGroupsJson()
-
-
-  # match method:
-  #   case 'GET':
-  #     pass
-  #   case 'POST':
-  #     pass
-  #   case 'PUT':
-  #     pass
-  #   case 'DELETE':
-  #     pass
-
-
-
-# /players	
-#   Is admin:
-#     Retrieve from backend bucket
-#     content_object = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
-#   Else:
-#     Retrieve from public bucket
-#     content_object = getJsonS3(S3_BUCKET, 'players_groups.json')
-
-# Update from existing JSON Cache
-
-# Full update from Cognito
-# def updatePlayersGroupsJson():
-#   players_groups = reduceUserAttrib(getAllUsersInAllGroups())

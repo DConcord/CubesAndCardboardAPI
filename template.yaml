@@ -336,6 +336,33 @@ Resources:
                 - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/manage_events_${Mode}:*"
                 - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/manage_events_${Mode}:log-stream:*"
 
+  BggSearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "BggSearch_${Mode}"
+      CodeUri: bgg_search/
+      Handler: bgg_search.lambda_handler
+      Runtime: python3.12
+      MemorySize: 512
+      Timeout: 30
+      Events:
+        GameSearch:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /gamesearch
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        GameSearchOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /gamesearch
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function
     Properties:

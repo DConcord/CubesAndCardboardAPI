@@ -400,43 +400,6 @@ paths:
         passthroughBehavior: when_no_match
         type: mock
   /event/rsvp:
-    # get:
-    #   tags:
-    #     - events
-    #   summary: Add RSVP
-    #   description: Add RSVP
-    #   operationId: updateRsvp
-    #   x-amazon-apigateway-request-validator: params-headers
-    #   parameters:
-    #     - name: date
-    #       in: query
-    #       description: Event date mm/dd/yyyy
-    #       required: true
-    #       style: form
-    #       explode: true
-    #       schema:
-    #         type: string
-    #     - name: name
-    #       in: query
-    #       description: Player name
-    #       required: true
-    #       style: form
-    #       explode: true
-    #       schema:
-    #         type: string
-    #   responses:
-    #     "200":
-    #       description: Get event info
-    #       headers:
-    #         Access-Control-Allow-Origin:
-    #           type: string
-    #     "400":
-    #       description: "invalid input, object invalid"
-    #   x-amazon-apigateway-integration:
-    #     uri:
-    #       Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
-    #     httpMethod: POST
-    #     type: aws_proxy
     post:
       tags:
         - events
@@ -865,6 +828,72 @@ paths:
         passthroughBehavior: when_no_match
         type: mock
 
+  /gamesearch:
+    get:
+      tags:
+        - gamesearch
+      summary: Search for BGG ID
+      description: Search for BGG ID
+      operationId: gameSearch
+      x-amazon-apigateway-request-validator: params-headers
+      parameters:
+        - name: game
+          in: query
+          description: Search for BGG ID
+          required: true
+          schema:
+            type:
+              type: string
+        - name: threshold
+          in: query
+          description: fuzzy match threshold
+          required: false
+          schema:
+            type:
+              type: string
+              pattern: '(^[1-9][0-9]?$|^100$)'
+      responses:
+        "200":
+          description: Get Activity Logs
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BggSearchFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
 components:
   schemas:
     NewEvent:
