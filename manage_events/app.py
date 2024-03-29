@@ -109,11 +109,23 @@ def lambda_handler(apiEvent, context):
               print(f"WARNING: user_id '{event['host']}' is not an admin or the event host. not authorized")
               return unauthorized
             diff = compareAttributes(event, data)
-            host_modifiable = {'game', 'bgg_id', 'player_pool', 'attending', 'not_attending'}
+            host_modifiable = {'game', 'bgg_id', 'player_pool', 'attending', 'not_attending', 'finalScore'}
             event_updates = { k: data[k] for k in host_modifiable.intersection(set({**diff['added'], **diff['modified']}))}
+            for key in  diff['removed']:
+              if key not in event_updates and key in host_modifiable:
+                event_updates[key] = ""
             if 'bgg_id' in event_updates and event_updates['bgg_id'] != 0 :
               process_bgg_id(event_updates['bgg_id'])
-            updateEvent(data['event_id'], event_updates)
+            try:
+              updateEvent(data['event_id'], event_updates)
+            except Exception as e:
+              print(json.dumps({'ERROR': str(e), 'event_id': data['event_id'], 'event_updates': event_updates}))
+              print(e)
+              return {
+                'statusCode': 500,
+                'headers': {'Access-Control-Allow-Origin': origin},
+                'body': json.dumps({'message': 'Internal Server Error'})
+              }
             original = {k: event[k] for k in event_updates if k in event}
             print(json.dumps({
               'log_type': 'event',
@@ -402,7 +414,7 @@ def lambda_handler(apiEvent, context):
         
         # Create new Player
         case 'POST':
-          if not authorize(apiEvent, auth_groups, ['admin']): 
+          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): 
             return unauthorized
           
           data = json.loads(apiEvent['body'])
@@ -447,7 +459,7 @@ def lambda_handler(apiEvent, context):
 
         # Update Existing Player
         case 'PUT':
-          if not authorize(apiEvent, auth_groups, ['admin']): 
+          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): 
             return unauthorized
           
           user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
@@ -712,13 +724,19 @@ def compareAttributes(old_attributes, new_attributes):
   
   keys_same = set(new_attributes.keys()) & set(old_attributes.keys())
   for key in keys_same:
-    if isinstance(new_attributes[key], list):
-      if set(new_attributes[key]) != set(old_attributes[key]):
-        diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
-        diff['modified'][key] = new_attributes[key] # Modified attr value (different in new)
-    elif old_attributes[key] != new_attributes[key]:
-      diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
-      diff['modified'][key] = new_attributes[key] # Modified attr value (different in new)
+    if key == 'finalScore':
+      _old = json.dumps(old_attributes[key])
+      _new = json.dumps(new_attributes[key])
+    elif isinstance(new_attributes[key], list):
+      _old = set(old_attributes[key])
+      _new = set(new_attributes[key])
+    else:
+      _old = old_attributes[key]
+      _new = new_attributes[key]
+
+    if _old != _new:
+      diff['previous'][key] = _old # previous Attr value (original if different in new)
+      diff['modified'][key] = _new # Modified attr value (different in new)
 
   return diff
 
@@ -831,6 +849,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
     'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']}
   }
+  if 'finalScore' in eventDict and eventDict['finalScore'] != '': new_event['finalScore'] = {'S': json.dumps(eventDict['finalScore'])}
   if 'status' in eventDict: new_event['status'] = {'S': eventDict['status']}
   if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
@@ -881,6 +900,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
     'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']},
   }
+  if 'finalScore' in eventDict and  eventDict['finalScore'] != '': modified_event['finalScore'] = {'S': json.dumps(eventDict['finalScore'])}
   if 'status' in eventDict: modified_event['status'] = {'S': eventDict['status']}
   if 'bgg_id' in eventDict: modified_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict: modified_event['total_spots'] = {'N': str(eventDict['total_spots'])}
@@ -919,6 +939,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
 def updateEvent(event_id, event_updates):
   from copy import deepcopy
   event_updates = deepcopy(event_updates)
+  if 'finalScore' in event_updates and event_updates['finalScore'] != '': event_updates['finalScore'] = json.dumps(event_updates['finalScore'])
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
   table = ddb.Table(TABLE_NAME)
   response = table.update_item(
@@ -969,6 +990,7 @@ def getEvent(event_id, attributes=[], as_json=False):
       if 'not_attending' in event and 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
       if 'attending' in event and 'placeholder' in event['attending']: event['attending'].remove('placeholder')
       if 'player_pool' in event and 'placeholder' in event['player_pool']: event['player_pool'].remove('placeholder') 
+      if 'finalScore' in event : event['finalScore'] = json.loads(event['finalScore'])
     except:
       print(json.dumps(event, indent=2, default=ddb_default))
       raise
@@ -1003,6 +1025,7 @@ def getEvents(dateGte = None, dateLte = None, event_type='GameKnight', as_json=F
       if 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
       if 'placeholder' in event['attending']: event['attending'].remove('placeholder')
       if 'placeholder' in event['player_pool']: event['player_pool'].remove('placeholder') 
+      if 'finalScore' in event : event['finalScore'] = json.loads(event['finalScore'])
     except:
       json.dumps(event, default=ddb_default)
       raise
