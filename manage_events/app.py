@@ -114,6 +114,11 @@ def lambda_handler(apiEvent, context):
             for key in  diff['removed']:
               if key not in event_updates and key in host_modifiable:
                 event_updates[key] = ""
+            if event_updates == {}:
+              return {
+                'statusCode': 204,
+                'headers': {'Access-Control-Allow-Origin': origin}
+              }
             if 'bgg_id' in event_updates and event_updates['bgg_id'] != 0 :
               process_bgg_id(event_updates['bgg_id'])
             try:
@@ -365,13 +370,19 @@ def lambda_handler(apiEvent, context):
           print('Get Events')
           data = apiEvent['queryStringParameters']
           if data and 'dateGte' in data and data['dateGte']:
-            dateGte = data['dateGte']
+            if data['dateGte'] == 'all':
+              dateGte = None # ALL
+            else:
+              dateGte = data['dateGte']
           else:
             # dateGte = None # ALL
             dateGte = datetime.now(ZoneInfo("America/Denver")).date() - timedelta(days=14)
           
           if data and 'dateLte' in data and data['dateLte']:
-            dateLte = data['dateLte']
+            if data['dateLte'] == '14d':
+              dateLte = datetime.now(ZoneInfo("America/Denver")).date() - timedelta(days=14)
+            else:
+              dateLte = data['dateLte']
           else:
             dateLte = None
           
@@ -659,7 +670,7 @@ def lambda_handler(apiEvent, context):
 
           client = boto3.client('logs')
           # query = "fields @timestamp, @message | parse @message \"username: * ClinicID: * nodename: *\" as username, ClinicID, nodename | filter ClinicID = 7667 and username='simran+test@example.com'"
-          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp"] and event_id != "a3c80692-17a3-4f47-988b-61ff72d2a044" | sort @timestamp desc'
+          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp"] | sort @timestamp desc'
           log_group = f'/aws/lambda/manage_events_{MODE}'
           start_query_response = client.start_query(
               logGroupName=log_group,
@@ -720,7 +731,6 @@ def compareAttributes(old_attributes, new_attributes):
         diff['removed'][key] = old_attributes[key] # Attr removed (not in new)
       else:
         diff['added'][key] = new_attributes[key] # Attr added (new only)
-        # diff['changed'][key] = new_attributes[key] # Attr added (new only)
   
   keys_same = set(new_attributes.keys()) & set(old_attributes.keys())
   for key in keys_same:
@@ -735,8 +745,8 @@ def compareAttributes(old_attributes, new_attributes):
       _new = new_attributes[key]
 
     if _old != _new:
-      diff['previous'][key] = _old # previous Attr value (original if different in new)
-      diff['modified'][key] = _new # Modified attr value (different in new)
+      diff['previous'][key] = old_attributes[key] # previous Attr value (original if different in new)
+      diff['modified'][key] = new_attributes[key] # Modified attr value (different in new)
 
   return diff
 
@@ -990,7 +1000,7 @@ def getEvent(event_id, attributes=[], as_json=False):
       if 'not_attending' in event and 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
       if 'attending' in event and 'placeholder' in event['attending']: event['attending'].remove('placeholder')
       if 'player_pool' in event and 'placeholder' in event['player_pool']: event['player_pool'].remove('placeholder') 
-      if 'finalScore' in event : event['finalScore'] = json.loads(event['finalScore'])
+      if 'finalScore' in event and event['finalScore']: event['finalScore'] = json.loads(event['finalScore'])
     except:
       print(json.dumps(event, indent=2, default=ddb_default))
       raise
@@ -1025,9 +1035,10 @@ def getEvents(dateGte = None, dateLte = None, event_type='GameKnight', as_json=F
       if 'placeholder' in event['not_attending']: event['not_attending'].remove('placeholder') 
       if 'placeholder' in event['attending']: event['attending'].remove('placeholder')
       if 'placeholder' in event['player_pool']: event['player_pool'].remove('placeholder') 
-      if 'finalScore' in event : event['finalScore'] = json.loads(event['finalScore'])
-    except:
-      json.dumps(event, default=ddb_default)
+      if 'finalScore' in event and event['finalScore']: event['finalScore'] = json.loads(event['finalScore'])
+    except Exception as e:
+      if 'finalScore' in event: print(event['finalScore'])
+      print(json.dumps(event, default=ddb_default))
       raise
   if as_json:
      return json.dumps(response['Items'], default=ddb_default)
