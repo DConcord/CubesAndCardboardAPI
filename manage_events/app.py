@@ -438,6 +438,7 @@ def lambda_handler(apiEvent, context):
             UserAttributes=attributes,
             MessageAction='SUPPRESS'
           )
+          # print(json.dumps(response, default=ddb_default))
 
           user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
           user = response['User']
@@ -495,6 +496,9 @@ def lambda_handler(apiEvent, context):
             for attribute, value in diff['removed'].items():
               attrib_changes.append({'Name': attribute, 'Value': ""})
               changes.append(attribute)
+
+            if 'email' in changes:
+              attrib_changes.append({'Name': 'email_verified', 'Value': 'true'})
             
             client = boto3.client('cognito-idp')
             attrib_response = client.admin_update_user_attributes(
@@ -502,6 +506,7 @@ def lambda_handler(apiEvent, context):
               Username=user_id,
               UserAttributes=attrib_changes
             )
+            # print(json.dumps({'attrib_changes': attrib_changes, 'attrib_response': attrib_response}, default=ddb_default))
           group_changes = {'added': [], 'removed': []}
           if set(data['groups']) != set(user_dict['Users'][user_id]['groups']):
             changes.append('groups')
@@ -930,6 +935,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
     modified_event['player_pool']['SS'].append('placeholder')
 
   if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id']:
+    print(json.dumps({"process_bgg_id_image": process_bgg_id_image, "'bgg_id' in eventDict": 'bgg_id' in eventDict, "bgg_id": eventDict['bgg_id']}))
     process_bgg_id(eventDict['bgg_id'])
 
   # date = parser.parse(text).date().isoformat()
@@ -1302,6 +1308,8 @@ def updateDates():
       print("to  : ", new_date, "\n")
     else:
       print("no change: ", event['date'], "\n")
+
+
 
 if __name__ == '__main__':
   
