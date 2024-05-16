@@ -293,6 +293,7 @@ def lambda_handler(apiEvent, context):
             'body': json.dumps({'result': 'Event Deleted'})
           }
         
+    # Players update their own RSVP to an event
     case '/event/rsvp':
       rsvp_change = {
         'attending': 'not_attending',
@@ -463,6 +464,7 @@ def lambda_handler(apiEvent, context):
             'attrib': '',
           }))
           updatePlayersGroupsJson(players_groups=user_dict)
+          updatePlayerPools()
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -552,6 +554,9 @@ def lambda_handler(apiEvent, context):
           for group in group_changes['removed']:
             user_dict['Groups'][group].remove(user_id)
             user_dict['Users'][user_id]['groups'].remove(group)
+          
+          if (group_changes['added'] or group_changes['removed']):
+            updatePlayerPools()
 
           print(json.dumps({
             'log_type': 'player',
