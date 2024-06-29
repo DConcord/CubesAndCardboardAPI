@@ -9,10 +9,11 @@ import uuid
 import botocore
 import time
 import os
+# from copy import deepcopy
 
 TABLE_NAME = os.environ['table_name'] # 'game_events'
 S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
-SQS_URL = "" #os.environ['sqs_url']
+RSVP_SQS_URL = os.environ['rsvp_sqs_url']
 SNS_TOPIC_ARN = os.environ['sns_topic']
 BACKEND_BUCKET = os.environ['backend_bucket']
 MODE = os.environ['mode']
@@ -170,8 +171,10 @@ def lambda_handler(apiEvent, context):
                     changes[player] = {'rsvp': 'attending', 'action': 'add'}
                 elif 'not_attending' in event_updates and player in event_updates['not_attending']:
                     changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
-              for player, rsvp in changes.items():
-                print(json.dumps({
+              for i, (player, rsvp) in enumerate(changes.items()):
+                if i == 0:
+                  process_rsvp_alert_task()   
+                rsvp_dict = {
                   'log_type': 'rsvp',
                   'auth_sub': auth_sub,
                   'auth_type': 'admin',
@@ -180,7 +183,10 @@ def lambda_handler(apiEvent, context):
                   'user_id': player,
                   'action': rsvp['action'],
                   'rsvp': rsvp['rsvp'],
-                }))
+                }
+                print(json.dumps(rsvp_dict))
+                send_rsvp_sqs(rsvp_dict)
+
             # print(json.dumps({"host": data['host'], "updates": event_updates, "original": event}, default=ddb_default))            
             print('Update Player Pools')
             updatePlayerPools()
@@ -241,8 +247,10 @@ def lambda_handler(apiEvent, context):
                   changes[player] = {'rsvp': 'attending', 'action': 'add'}
               elif 'not_attending' in event_new and player in event_new['not_attending']:
                   changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
-            for player, rsvp in changes.items():
-              print(json.dumps({
+            for i, (player, rsvp) in enumerate(changes.items()):
+              if i == 0:
+                process_rsvp_alert_task()              
+              rsvp_dict= {
                 'log_type': 'rsvp',
                 'auth_sub': auth_sub,
                 'auth_type': 'admin',
@@ -251,7 +259,9 @@ def lambda_handler(apiEvent, context):
                 'user_id': player,
                 'action': rsvp['action'],
                 'rsvp': rsvp['rsvp'],
-              }))
+              }
+              print(json.dumps(rsvp_dict))
+              send_rsvp_sqs(rsvp_dict)
 
           print('Update Player Pools')
           updatePlayerPools()
@@ -313,7 +323,7 @@ def lambda_handler(apiEvent, context):
             action = 'update'
           else:
             action = 'add'
-          print(json.dumps({
+          rsvp_dict = {
             'log_type': 'rsvp',
             'auth_sub': auth_sub,
             'auth_type': 'self',
@@ -322,7 +332,10 @@ def lambda_handler(apiEvent, context):
             'user_id': data['user_id'],
             'action': action,
             'rsvp': data['rsvp'],
-          }))
+          }
+          print(json.dumps(rsvp_dict))
+          send_rsvp_sqs(rsvp_dict)
+          process_rsvp_alert_task()
           print('Update Player Pools')
           updatePlayerPools()
           print('Publish public events.json')
@@ -343,7 +356,7 @@ def lambda_handler(apiEvent, context):
             return unauthorized
           current_event = getEvent(data['event_id'], attributes=['date'])
           response = deleteRSVP(data['event_id'], data['user_id'], data['rsvp'])
-          print(json.dumps({
+          rsvp_dict = {
             'log_type': 'rsvp',
             'auth_sub': auth_sub,
             'auth_type': 'self',
@@ -352,7 +365,10 @@ def lambda_handler(apiEvent, context):
             'user_id': data['user_id'],
             'action': 'delete',
             'rsvp': data['rsvp'],
-          }))
+          }
+          print(json.dumps(rsvp_dict))
+          send_rsvp_sqs(rsvp_dict)
+          process_rsvp_alert_task()
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Deleted; Publish public events.json')
@@ -807,22 +823,29 @@ def authorize(apiEvent, membership:list, filter_groups:list, log_if_false=True )
     return False
     raise Exception('Not Authorized')
   return True
-  
+
+def send_rsvp_sqs(rsvp_dict):
+  from copy import deepcopy
+  rsvp_dict = deepcopy(rsvp_dict)    
+  # rsvp_dict['timestamp'] = datetime.now().strftime("%Y%m%d%H%M%S%f")
+  rsvp_dict['timestamp'] = datetime.now(ZoneInfo("UTC")).isoformat()
+  sqs = boto3.client('sqs')
+  sqs.send_message(
+    QueueUrl=RSVP_SQS_URL, 
+    MessageBody=json.dumps(rsvp_dict, default=ddb_default),
+    MessageGroupId='rsvp',
+    # MessageAttributes={key: {'StringValue': value, 'DataType': 'String'} for key, value in rsvp_dict.items()}
+  )
+
 
 # Check whether bgg image has already been pulled and send 
-# an SQS to trigger pulling/resizing/saving it if not
+# an SNS to trigger pulling/resizing/saving it if not
 def process_bgg_id(bgg_id):
   global PULL_BGG_PIC
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
   if not key_exists(S3_BUCKET, key):
     PULL_BGG_PIC = True
-
-    # # send message to sqs
-    # print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
-    # sqs = boto3.client('sqs')
-    # sqs.send_message(QueueUrl=SQS_URL, MessageBody=f'{bgg_id}#{S3_BUCKET}')
-    # print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
 
     # send message to SNS
     print(f"Sending message to SNS: f'{bgg_id}#{SNS_TOPIC_ARN}'")
@@ -1315,9 +1338,75 @@ def updateDates():
       print("no change: ", event['date'], "\n")
 
 
+def process_rsvp_alert_task():
+  client = boto3.client('scheduler', region_name='us-east-1')
+  response = client.get_schedule(Name=f'rsvp_alerts_schedule_{MODE}')
+  current_schedule = response['ScheduleExpression'][3:-1]
+  if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") > datetime.now(ZoneInfo("UTC")):
+    print(f'Current rsvp process already scheduled ({current_schedule}) in the future')
+    return
+  
+  # Schedule RSVP alert batch processing for 5 minutes in the future
+  update_response = client.update_schedule(
+    Name=f'rsvp_alerts_schedule_{MODE}',
+    # ScheduleExpression=f'at({(datetime.now(ZoneInfo("UTC")) + timedelta(minutes=5)).isoformat()[:19]})',
+    ScheduleExpression=f'at({(datetime.now(ZoneInfo("UTC")) + timedelta(seconds=20)).isoformat()[:19]})',
+    Target= response['Target'],
+    FlexibleTimeWindow={"Mode": "OFF"}
+  )
+  print(f'Scheduled RSVP alert batch processing for 5 minutes in the future')
+  return
+  # print(json.dumps(update_response, default=ddb_default))
+
+
 
 if __name__ == '__main__':
-  
+  # print(datetime.now(ZoneInfo("UTC")).isoformat())
+  # print(datetime.now().isoformat())
+  # quit()
+  # client = boto3.client('scheduler', region_name='us-east-1')
+  # response = client.get_schedule(
+  #   # GroupName='string',
+  #   Name='rsvp_alerts_schedule_dev'
+  # )
+  # response = client.list_schedules(
+  #   # GroupName='string',
+  #   # MaxResults=123,
+  #   # NamePrefix='string',
+  #   # NextToken='string',
+  #   State='DISABLED'
+  # )
+
+  # test={
+  #   # "Arn": "arn:aws:scheduler:us-east-1:569879156317:schedule/default/rsvp_alerts_schedule_dev",
+  #   # "CreationDate": "2024-04-01T21:29:16.524000-06:00",
+  #   # "GroupName": "default",
+  #   # "LastModificationDate": "2024-04-01T21:29:16.524000-06:00",
+  #   # "State": "DISABLED",
+  #   "Name": "rsvp_alerts_schedule_dev",
+  #   "ScheduleExpression": "at(yyyy-mm-ddThh:mm:ss)",
+  #   "Target": {
+  #     "Arn": "arn:aws:lambda:us-east-1:569879156317:function:rsvp_alerts_dev",
+  #     "RoleArn": "arn:aws:iam::569879156317:role/DEVGameKnightsEventsAPI-RsvpAlertsFunctionScheduleE-k3D73wZ1kmkS"
+  #   }
+  # }
+    # datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()
+  # print(response['ScheduleExpression'][3:-1])
+  # print(datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") )
+  # print(datetime.now(ZoneInfo("UTC")))
+  # print(datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") > datetime.now(ZoneInfo("UTC")))
+  # print(json.dumps(response, indent=2, default=ddb_default))
+  # print(datetime.now(ZoneInfo("UTC")).isoformat()[:19])
+  # print((datetime.now(ZoneInfo("UTC")) + timedelta(minutes=5)).isoformat()[:19])
+  # now = datetime.now()
+  # date_string = now.strftime("%Y%m%d%H%M%S%f")
+  # # print(date_string)
+  # date_int = int(date_string)
+  # print(date_int)
+  # print(int(datetime.now().strftime("%Y%m%d%H%M%S%f")))
+
+  quit()
+
   all_events = getEvents()
   for event in all_events:
     if 'attending' not in event:
@@ -1382,7 +1471,8 @@ if __name__ == '__main__':
   # export s3_bucket=cdkstack-bucketdevff8a9acd-pine3ubqpres
   # export table_name=game_events_dev      
   # export backend_bucket=dev-cubes-and-cardboard-backend
-  # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_dev   
+  # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_dev
+  # export rsvp_sqs_url=p
   # export mode=dev
 
   # # Prod:

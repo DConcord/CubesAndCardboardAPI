@@ -1,5 +1,5 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from "@aws-sdk/client-sqs";
+import { SQSClient, ReceiveMessageCommand, Message, DeleteMessageCommand } from "@aws-sdk/client-sqs";
 import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3"; 
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2"; 
 import { GetItemCommand, GetItemInput, DynamoDBClient, QueryCommand, QueryInput } from "@aws-sdk/client-dynamodb"; 
@@ -13,7 +13,7 @@ import { exit } from 'process';
 
 
 // export TABLE_NAME=game_events_dev      
-// export S3_BUCKET=cdkstack-bucketdevff8a9acd-pine3ubqpres
+// export S3_BUCKET=cdkstack-bucketdevff8a9acd-pine3ubqpres 
 // export RSVP_SQS_URL=p
 
 const RSVP_SQS_URL = process.env.RSVP_SQS_URL;
@@ -45,6 +45,7 @@ const ddb = new DynamoDBClient(config); // BareBones
 // const ddb = new DynamoDB() // Full
 // const ddbDocClient = DynamoDBDocumentClient.from(ddb); // client is DynamoDB client
 
+// Retrieve GameKnightEvent from DynamoDB
 async function getEvent(event_id:string, attributes = [], asJson = false): Promise<ExistingGameKnightEventDDB | undefined> {
   const getItemInput:GetItemInput = {
     TableName: TABLE_NAME, 
@@ -190,7 +191,7 @@ const ReceiveMessage = () => new ReceiveMessageCommand({ // ReceiveMessageReques
 
 export const lambdaHandler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   try {
-    const messages = []
+    const messages:Message[] = []
     let response = await sqs.send(ReceiveMessage())
     if (response.Messages){
       messages.push(...response.Messages)

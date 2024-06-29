@@ -6,6 +6,14 @@
 aws s3 cp swagger.yaml s3://cp-sam-deploy-east1/
 ``` -->
 
+## Typescript global dependency
+
+Install esbuild globally
+
+```
+npm install -g esbuild
+```
+
 ## sam package
 
 <!-- ```
