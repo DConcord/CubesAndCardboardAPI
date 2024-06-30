@@ -255,6 +255,8 @@ basic-aws-custom-authorizer/output\.yaml
 
 *.zip
 
+**/node_modules
+
 # Dev Swagger
 test.yaml
 swagger *.yaml

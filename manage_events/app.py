@@ -888,6 +888,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
     'host': {'S': eventDict['host']},
     'organizer': {'S': eventDict['organizer']} if 'organizer' in eventDict else {'S': ''},
     'format': {'S': eventDict['format']},
+    'open_rsvp_eligibility': {'BOOL': eventDict['open_rsvp_eligibility']} if 'open_rsvp_eligibility' in eventDict else {'BOOL': False},
     'game': {'S': eventDict['game']},
     'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']}
@@ -939,6 +940,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
     'host': {'S': eventDict['host']},
     'organizer': {'S': eventDict['organizer']} if 'organizer' in eventDict else {'S': ''},
     'format': {'S': eventDict['format']},
+    'open_rsvp_eligibility': {'BOOL': eventDict['open_rsvp_eligibility']} if 'open_rsvp_eligibility' in eventDict else {'BOOL': False},
     'game': {'S': eventDict['game']},
     'attending': {'SS': eventDict['attending']},
     'player_pool': {'SS': eventDict['player_pool']},
@@ -1196,7 +1198,10 @@ def updatePlayerPools():
 
   ## First round: organizers_spent
   for event in upcomingEvents:
-    if event['format'] == 'Open':
+    if (
+      event['format'] == 'Open' or 
+      (event['format'] == 'Reserved' and 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True)
+    ):
       if set(players) != set(event["player_pool"]):
         event_updates[event['event_id']]['player_pool'] = set(players)
       if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
