@@ -255,6 +255,8 @@ basic-aws-apigateway-demo-app/node_modules
 
 *.zip
 
+**/node_modules
+
 # Dev Swagger
 test.yaml
 swagger *.yaml
