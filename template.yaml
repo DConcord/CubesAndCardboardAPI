@@ -109,12 +109,12 @@ Resources:
   ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
       FunctionName: !Sub manage_events_${Mode}
       CodeUri: manage_events/
       Handler: app.lambda_handler
       Runtime: python3.12
+      Architectures:
+        - arm64
       MemorySize: 512
       Timeout: 30
       Events:
@@ -286,6 +286,50 @@ Resources:
             Auth:
               Authorizer: NONE
 
+        # /alerts
+        GetAlerts:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        AlertsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
+        # /alerts/player
+        GetAlertsPlayer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts/player
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        PutAlertsPlayer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts/player
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
+        AlertsPlayerOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts/player
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
       Environment:
@@ -354,12 +398,12 @@ Resources:
   BggSearchFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
       FunctionName: !Sub "BggSearch_${Mode}"
       CodeUri: bgg_search/
       Handler: bgg_search.lambda_handler
       Runtime: python3.12
+      Architectures:
+        - arm64
       MemorySize: 512
       Timeout: 30
       Events:
@@ -388,16 +432,20 @@ Resources:
       Handler: app.lambdaHandler
       Runtime: nodejs20.x
       Architectures:
-        - x86_64
+        - arm64
       MemorySize: 256
       Timeout: 30
       Environment:
         Variables:
+          MODE: !Ref Mode
           RSVP_SQS_URL: !Ref RsvpAlertSqsQueue
           S3_BUCKET: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
           TABLE_NAME: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
+          BACKEND_BUCKET: !Ref BackendBucket
+          NODE_OPTIONS: --enable-source-maps
       Events:
         ScheduleEvent:
+          # Initial Scheduled event placeholder (modified by the 'manage_events' lambda after each RSVP change)
           Type: ScheduleV2
           Properties:
             Name: !Sub "rsvp_alerts_schedule_${Mode}"
@@ -411,6 +459,8 @@ Resources:
             QueueName: !GetAtt RsvpAlertSqsQueue.QueueName
         - S3ReadPolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+        - S3ReadPolicy:
+            BucketName: !Ref BackendBucket
         - DynamoDBReadPolicy:
             TableName: !Ref EventsTable
       Tags:
@@ -419,7 +469,7 @@ Resources:
       BuildMethod: esbuild
       BuildProperties:
         Minify: true
-        Target: "es2020"
+        Target: "es2022"
         Sourcemap: true
         EntryPoints:
           - app.ts
@@ -461,12 +511,12 @@ Resources:
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
       FunctionName: !Sub "RetrieveBGGImage_${Mode}"
       CodeUri: bgg_picture/
       Handler: app.lambda_handler
       Runtime: python3.12
+      Architectures:
+        - arm64
       MemorySize: 512
       Timeout: 30
       Events:
