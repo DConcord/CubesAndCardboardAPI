@@ -9,10 +9,11 @@ import uuid
 import botocore
 import time
 import os
+# from copy import deepcopy
 
 TABLE_NAME = os.environ['table_name'] # 'game_events'
 S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
-SQS_URL = "" #os.environ['sqs_url']
+RSVP_SQS_URL = os.environ['rsvp_sqs_url']
 SNS_TOPIC_ARN = os.environ['sns_topic']
 BACKEND_BUCKET = os.environ['backend_bucket']
 MODE = os.environ['mode']
@@ -92,7 +93,10 @@ def lambda_handler(apiEvent, context):
           print('Event Created; Publish public events.json')
           updatePublicEventsJson()
           print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
-          if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+          try:
+            if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+          except Exception as e:
+              print(e)
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -119,7 +123,7 @@ def lambda_handler(apiEvent, context):
                 'statusCode': 204,
                 'headers': {'Access-Control-Allow-Origin': origin}
               }
-            if 'bgg_id' in event_updates and event_updates['bgg_id'] != 0 :
+            if 'bgg_id' in event_updates and event_updates['bgg_id'] > 0 :
               process_bgg_id(event_updates['bgg_id'])
             try:
               updateEvent(data['event_id'], event_updates)
@@ -170,8 +174,10 @@ def lambda_handler(apiEvent, context):
                     changes[player] = {'rsvp': 'attending', 'action': 'add'}
                 elif 'not_attending' in event_updates and player in event_updates['not_attending']:
                     changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
-              for player, rsvp in changes.items():
-                print(json.dumps({
+              for i, (player, rsvp) in enumerate(changes.items()):
+                if i == 0:
+                  process_rsvp_alert_task()   
+                rsvp_dict = {
                   'log_type': 'rsvp',
                   'auth_sub': auth_sub,
                   'auth_type': 'admin',
@@ -180,14 +186,20 @@ def lambda_handler(apiEvent, context):
                   'user_id': player,
                   'action': rsvp['action'],
                   'rsvp': rsvp['rsvp'],
-                }))
+                }
+                print(json.dumps(rsvp_dict))
+                send_rsvp_sqs(rsvp_dict)
+
             # print(json.dumps({"host": data['host'], "updates": event_updates, "original": event}, default=ddb_default))            
             print('Update Player Pools')
             updatePlayerPools()
             print('Event Modified; Publish public events.json')
             updatePublicEventsJson()
             print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
-            if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+            try:
+              if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+            except Exception as e:
+                print(e)
             return {
               'statusCode': 201,
               'headers': {'Access-Control-Allow-Origin': origin},
@@ -209,8 +221,11 @@ def lambda_handler(apiEvent, context):
             'auth_type': 'admin',
             'event_id': data['event_id'],
             'date': current_event['date'],
-            'previous': json.dumps(event_prev, default=ddb_default),
-            'new': json.dumps(event_new, default=ddb_default),
+            'previous': event_prev,
+            'new': event_new,
+            # 'previous': json.dumps(event_prev, default=ddb_default),
+            # 'new': json.dumps(event_new, default=ddb_default),
+            'new_final': data,
             'action': 'modify',
           }, default=ddb_default))
           all_rsvp = set()
@@ -241,8 +256,10 @@ def lambda_handler(apiEvent, context):
                   changes[player] = {'rsvp': 'attending', 'action': 'add'}
               elif 'not_attending' in event_new and player in event_new['not_attending']:
                   changes[player] = {'rsvp': 'not_attending', 'action': 'add'}
-            for player, rsvp in changes.items():
-              print(json.dumps({
+            for i, (player, rsvp) in enumerate(changes.items()):
+              if i == 0:
+                process_rsvp_alert_task()              
+              rsvp_dict= {
                 'log_type': 'rsvp',
                 'auth_sub': auth_sub,
                 'auth_type': 'admin',
@@ -251,14 +268,19 @@ def lambda_handler(apiEvent, context):
                 'user_id': player,
                 'action': rsvp['action'],
                 'rsvp': rsvp['rsvp'],
-              }))
+              }
+              print(json.dumps(rsvp_dict))
+              send_rsvp_sqs(rsvp_dict)
 
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Modified; Publish public events.json')
           updatePublicEventsJson()
           print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
-          if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+          try:
+            if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+          except Exception as e:
+              print(e)
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -313,7 +335,7 @@ def lambda_handler(apiEvent, context):
             action = 'update'
           else:
             action = 'add'
-          print(json.dumps({
+          rsvp_dict = {
             'log_type': 'rsvp',
             'auth_sub': auth_sub,
             'auth_type': 'self',
@@ -322,7 +344,10 @@ def lambda_handler(apiEvent, context):
             'user_id': data['user_id'],
             'action': action,
             'rsvp': data['rsvp'],
-          }))
+          }
+          print(json.dumps(rsvp_dict))
+          send_rsvp_sqs(rsvp_dict)
+          process_rsvp_alert_task()
           print('Update Player Pools')
           updatePlayerPools()
           print('Publish public events.json')
@@ -343,7 +368,7 @@ def lambda_handler(apiEvent, context):
             return unauthorized
           current_event = getEvent(data['event_id'], attributes=['date'])
           response = deleteRSVP(data['event_id'], data['user_id'], data['rsvp'])
-          print(json.dumps({
+          rsvp_dict = {
             'log_type': 'rsvp',
             'auth_sub': auth_sub,
             'auth_type': 'self',
@@ -352,7 +377,10 @@ def lambda_handler(apiEvent, context):
             'user_id': data['user_id'],
             'action': 'delete',
             'rsvp': data['rsvp'],
-          }))
+          }
+          print(json.dumps(rsvp_dict))
+          send_rsvp_sqs(rsvp_dict)
+          process_rsvp_alert_task()
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Deleted; Publish public events.json')
@@ -388,6 +416,8 @@ def lambda_handler(apiEvent, context):
             dateLte = None
           
           events = getEvents(dateGte = dateGte, dateLte = dateLte)
+
+          # If not an admin, filter out "private" events of which the member is not in the player pool
           if not authorize(apiEvent, auth_groups, ['admin'], log_if_false=False):
             events = [event for event in events if not (event['format'] == 'Private' and auth_sub not in event['player_pool'])]
           return {
@@ -401,18 +431,21 @@ def lambda_handler(apiEvent, context):
          
         # Get Players
         case 'GET':
-          print('Get Players')
-          refresh = "no"
-          if apiEvent['queryStringParameters'] and apiEvent['queryStringParameters']['refresh']:
-            refresh = apiEvent['queryStringParameters']['refresh'].lower()
-
           if authorize(apiEvent, auth_groups, ['admin']): 
+            print('Get Players (admin)')
+            refresh = "no"
+            if apiEvent['queryStringParameters'] and apiEvent['queryStringParameters']['refresh']:
+              refresh = apiEvent['queryStringParameters']['refresh'].lower()
+
             if refresh.lower() == 'yes':
               print('Get full players/groups refresh')
               user_dict = updatePlayersGroupsJson()
             else:
               user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          
+          # Non-admin users just retrieve the public facing (reduced details) players_groups.json
           else:
+            print('Get Players (non-admin)')
             user_dict = getJsonS3(S3_BUCKET, 'players_groups.json')
             
           return {
@@ -426,7 +459,7 @@ def lambda_handler(apiEvent, context):
         
         # Create new Player
         case 'POST':
-          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): 
+          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test
             return unauthorized
           
           data = json.loads(apiEvent['body'])
@@ -473,7 +506,7 @@ def lambda_handler(apiEvent, context):
 
         # Update Existing Player
         case 'PUT':
-          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): 
+          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test
             return unauthorized
           
           user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
@@ -580,12 +613,12 @@ def lambda_handler(apiEvent, context):
         # Player updating their own attributes
         case 'PUT':
           print("Player update own attributes")
-          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
           data = json.loads(apiEvent['body'])
           user_id = data['user_id']
           if auth_sub != data['user_id']:
             print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
             return unauthorized
+          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
           attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id', 'accessToken']]
           attributes.append({'Name': 'sub', 'Value': user_id})
           for attrib in user_dict['Users'][user_id]['Attributes']:
@@ -713,7 +746,82 @@ def lambda_handler(apiEvent, context):
             'headers': {'Access-Control-Allow-Origin': origin},
             'body': json.dumps(_response, default=ddb_default),
           }
+
+
+    case '/alerts':
+      match method:
+        case 'GET':
+          if not authorize(apiEvent, auth_groups, ['admin']):
+            return unauthorized
+          email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
+          return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(email_alert_preferences, default=ddb_default),
+          }
           
+    case '/alerts/player':
+      match method:
+        case 'GET':
+          # if not authorize(apiEvent, auth_groups, ['admin']):
+          #   return unauthorized
+          print("Get Player's Email Alert subscriptions")
+          data = apiEvent['queryStringParameters']
+          user_id = data['user_id']
+          if auth_sub != data['user_id']:
+            print(f"UNAUTHORIZED: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
+            return unauthorized
+          email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
+          user_alert_preferences = {}
+          for alert_type, subscriber_list in email_alert_preferences.items():
+            user_alert_preferences[alert_type] = user_id in subscriber_list
+          return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(user_alert_preferences, default=ddb_default),
+          }
+
+
+        # Update player's email alerts subscriptions
+        case 'PUT':
+          print("Update Player's email alerts subscriptions")
+          data = json.loads(apiEvent['body'])
+          user_id = data['user_id']
+          if not authorize(apiEvent, auth_groups, ['admin']) and auth_sub != data['user_id']:
+            print(f"UNAUTHORIZED: user is not an admin and user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
+            return unauthorized
+          alert_subscriptions = data['alert_subscriptions']
+          email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
+          email_alert_preferences = {alert_type: set(subscriber_list) for alert_type, subscriber_list in email_alert_preferences.items()}
+
+          for alert_type, subscribed in alert_subscriptions.items():
+            if alert_type not in email_alert_preferences: 
+              # print(f"WARNING: Email Alert type '{alert_type}' does not exist")
+              # continue
+              email_alert_preferences[alert_type] = set()
+            
+            if subscribed:
+              email_alert_preferences[alert_type].add(user_id)
+            else:
+              if user_id in email_alert_preferences[alert_type]:
+                email_alert_preferences[alert_type].remove(user_id)
+
+          # Those subscribed to rsvp_all cannot also be subscribed to rsvp_hosted
+          email_alert_preferences["rsvp_hosted"] = email_alert_preferences["rsvp_hosted"] - email_alert_preferences["rsvp_all"]
+
+          s3 = boto3.client('s3')
+          s3.put_object(
+            Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
+            Bucket=BACKEND_BUCKET,
+            Key='email_alert_preferences.json',
+            ContentType='application/json',
+            CacheControl='no-cache'
+          )
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps({'result': 'Alert Subscription(s) Modified'})
+          }
 
   print('Unhandled Method or Path')
   if authorize(apiEvent, auth_groups, ['admin']):
@@ -807,22 +915,48 @@ def authorize(apiEvent, membership:list, filter_groups:list, log_if_false=True )
     return False
     raise Exception('Not Authorized')
   return True
+
+def send_rsvp_sqs(rsvp_dict):
+  from copy import deepcopy
+  rsvp_dict = deepcopy(rsvp_dict)    
+  # rsvp_dict['timestamp'] = datetime.now().strftime("%Y%m%d%H%M%S%f")
+  rsvp_dict['timestamp'] = datetime.now(ZoneInfo("UTC")).isoformat()
+  sqs = boto3.client('sqs')
+  sqs.send_message(
+    QueueUrl=RSVP_SQS_URL, 
+    MessageBody=json.dumps(rsvp_dict, default=ddb_default),
+    MessageGroupId='rsvp',
+    # MessageAttributes={key: {'StringValue': value, 'DataType': 'String'} for key, value in rsvp_dict.items()}
+  )
+
+def process_rsvp_alert_task():
+  client = boto3.client('scheduler', region_name='us-east-1')
+  response = client.get_schedule(Name=f'rsvp_alerts_schedule_{MODE}')
+  current_schedule = response['ScheduleExpression'][3:-1]
+  if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") > datetime.now(ZoneInfo("UTC")):
+    print(f'Current rsvp process already scheduled ({current_schedule}) in the future')
+    return
   
+  # Schedule RSVP alert batch processing for 5 minutes in the future
+  update_response = client.update_schedule(
+    Name=f'rsvp_alerts_schedule_{MODE}',
+    # ScheduleExpression=f'at({(datetime.now(ZoneInfo("UTC")) + timedelta(minutes=5)).isoformat()[:19]})',
+    ScheduleExpression=f'at({(datetime.now(ZoneInfo("UTC")) + timedelta(seconds=60 if MODE == 'prod' else 30)).isoformat()[:19]})',
+    Target= response['Target'],
+    FlexibleTimeWindow={"Mode": "OFF"}
+  )
+  print(f'Scheduled RSVP alert batch processing for 5 minutes in the future')
+  return
+  # print(json.dumps(update_response, default=ddb_default))
 
 # Check whether bgg image has already been pulled and send 
-# an SQS to trigger pulling/resizing/saving it if not
+# an SNS to trigger pulling/resizing/saving it if not
 def process_bgg_id(bgg_id):
   global PULL_BGG_PIC
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
   if not key_exists(S3_BUCKET, key):
     PULL_BGG_PIC = True
-
-    # # send message to sqs
-    # print(f"Sending message to SQS: f'{bgg_id}#{S3_BUCKET}'")
-    # sqs = boto3.client('sqs')
-    # sqs.send_message(QueueUrl=SQS_URL, MessageBody=f'{bgg_id}#{S3_BUCKET}')
-    # print(f"Message sent to SQS: f'{bgg_id}#{S3_BUCKET}'")
 
     # send message to SNS
     print(f"Sending message to SNS: f'{bgg_id}#{SNS_TOPIC_ARN}'")
@@ -941,7 +1075,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   if 'placeholder' not in modified_event['player_pool']['SS']:
     modified_event['player_pool']['SS'].append('placeholder')
 
-  if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id']:
+  if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id'] and eventDict['bgg_id'] > 0:
     print(json.dumps({"process_bgg_id_image": process_bgg_id_image, "'bgg_id' in eventDict": 'bgg_id' in eventDict, "bgg_id": eventDict['bgg_id']}))
     process_bgg_id(eventDict['bgg_id'])
 
@@ -965,17 +1099,22 @@ def updateEvent(event_id, event_updates):
   if 'finalScore' in event_updates and event_updates['finalScore'] != '': event_updates['finalScore'] = json.dumps(event_updates['finalScore'])
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
   table = ddb.Table(TABLE_NAME)
-  response = table.update_item(
-    Key={ 'event_id': event_id },
-    UpdateExpression='SET ' + ', '.join([f'#{k} = :{k}' for k in event_updates.keys()]),
-    ConditionExpression=Attr('event_id').exists(),
-    ExpressionAttributeValues={
-      f':{k}': v for k, v in event_updates.items()
-    },
-    ExpressionAttributeNames={
-      f'#{k}': k for k in event_updates.keys()
-    }
-  )
+  try:
+    response = table.update_item(
+      Key={ 'event_id': event_id },
+      UpdateExpression='SET ' + ', '.join([f'#{k} = :{k}' for k in event_updates.keys()]),
+      ConditionExpression=Attr('event_id').exists(),
+      ExpressionAttributeValues={
+        f':{k}': v for k, v in event_updates.items()
+      },
+      ExpressionAttributeNames={
+        f'#{k}': k for k in event_updates.keys()
+      }
+    )
+  except Exception as e:
+    print(e)
+    print(json.dumps({'event_updates': event_updates}, default=ddb_default))
+    raise e
   print(f'Event {event_id} updated')
   return response
 ## def updateEvent(event_id, event_updates)
@@ -1173,65 +1312,94 @@ def updatePlayerPools():
   event_updates = defaultdict(dict)
   upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).date())
 
+  print(json.dumps({"init event_updates": event_updates}, default=ddb_default))
+
   ## First round: organizers_spent
   for event in upcomingEvents:
+    # Open and open_rsvp_eligibility should have all available players and organizers in their pools
     if (
       event['format'] == 'Open' or 
       (event['format'] == 'Reserved' and 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True)
     ):
       if set(players) != set(event["player_pool"]):
+        print(f"event {event['event_id']} update 1")
         event_updates[event['event_id']]['player_pool'] = set(players)
       if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
+        print(f"event {event['event_id']} update 2")
         event_updates[event['event_id']]['organizer_pool'] = set(organizers)
       
-
+    # If Reserved (but not open_rsvp_eligibility)...
     if event['format'] != 'Reserved': continue
-    if event['organizer'] != '' and event['organizer'] not in event['attending']:
+    if 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True: continue
+    # Clear the event organizer if they are not attending or they're now the host
+    if event['organizer'] != '' and (event['organizer'] not in event['attending'] or event['organizer'] == event['host']):
       event['organizer'] = ''
+      print(f"event {event['event_id']} update 3")
       event_updates[event['event_id']]['organizer'] = ''
       continue
+    # Otherwise add the organizer to organizers_spent 
     if event['organizer'] != '': 
       organizers_spent.add(event['organizer'])
 
+  print(json.dumps({"round 1 event_updates": event_updates}, default=ddb_default))
+
   ## Second round: players_spent and event organizer + organizers_spent
   for event in upcomingEvents:
+    # If Reserved (but not open_rsvp_eligibility)...
     if event['format'] != 'Reserved': continue
+    if 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True: continue
     for player in event['attending']:
       if player == event['host']: continue
+      # If attending player is an organizer, organizer isnt already being updated, and player isn't already a spent organizer, 
+      # add them as the organizer (and as spent)
       if player in organizers:
-        if event['organizer'] == '' and 'organizer' not in event_updates[event['event_id']] and player not in organizers_spent:
+        if event['organizer'] == '' and player not in organizers_spent:
           event['organizer'] = player
+          print(f"event {event['event_id']} update 4")
           event_updates[event['event_id']]['organizer'] = player
           organizers_spent.add(player)
           continue
+        # Add player as organizers_spent
         elif event['organizer'] == player:
           organizers_spent.add(player)
           continue
+      # Add player as players_spent
       players_spent.add(player)
+
+  print(json.dumps({"round 2 event_updates": event_updates}, default=ddb_default))
 
   # Round 3. Update Player and Organizer pools
   for event in upcomingEvents:
+    # If Reserved (but not open_rsvp_eligibility)...
     if event['format'] != 'Reserved': continue
+    if 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True: continue
     
+    # If its after midnight the sunday before the event, open the player and organizer pool if not already
     if is_after_sunday_midnight_of(datetime.fromisoformat(event['date']).replace(tzinfo=ZoneInfo("America/Denver"))):
     # if is_after_sunday_midnight_of(datetime.fromisoformat(event['date'])):
       if set(players) != set(event["player_pool"]):
+        print(f"event {event['event_id']} update 5")
         event_updates[event['event_id']]['player_pool'] = set(players)
       if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
+        print(f"event {event['event_id']} update 6")
         event_updates[event['event_id']]['organizer_pool'] = set(organizers)
+    # Otherwise set each event's player & organizer pool as total_players - spent_players + attending_players
     else:
       player_pool = set(players) - players_spent
       player_pool.update(event['attending'])
       organizer_pool = set(organizers) - organizers_spent
       if event['organizer'] != '': organizer_pool.add(event['organizer'])
       if player_pool != set(event["player_pool"]):
+        print(f"event {event['event_id']} update 7")
         event_updates[event['event_id']]['player_pool'] = set(player_pool)
       if 'organizer_pool' not in event or organizer_pool != set(event["organizer_pool"]):
+        print(f"event {event['event_id']} update 8")
         event_updates[event['event_id']]['organizer_pool'] = set(organizer_pool)
   
-  # print(json.dumps({"event_updates": event_updates}, indent=2, default=ddb_default))
+  print(json.dumps({"final event_updates": event_updates}, default=ddb_default))
   # input("Pause")
   for event_id, event_update in event_updates.items():
+    if not event_update: print(f"No updates for event {event_id}")
     updateEvent(event_id, event_update)
 ## end def updatePlayerPools()
 
@@ -1320,9 +1488,112 @@ def updateDates():
       print("no change: ", event['date'], "\n")
 
 
+def replaceUserId(old_user_id, new_user_id, events=None):
+  update_log = []
+  if events is None:
+    events = getEvents() # All
+  for event in events:
+    update = False
+    if old_user_id in event['attending']:
+      event['attending'].remove(old_user_id)
+      event['attending'].add(new_user_id)
+      update_log.append(f'Updated {event["event_id"]} ({event["game"]}) attending from {old_user_id} to {new_user_id}')
+      update = True
+    if old_user_id in event['not_attending']:
+      event['not_attending'].remove(old_user_id)
+      event['not_attending'].add(new_user_id)
+      update_log.append(f'Updated {event["event_id"]} ({event["game"]}) not attending from {old_user_id} to {new_user_id}')
+      update = True
+    if old_user_id in event['player_pool']:
+      event['player_pool'].remove(old_user_id)
+      event['player_pool'].add(new_user_id)
+      update_log.append(f'Updated {event["event_id"]} ({event["game"]}) player pool from {old_user_id} to {new_user_id}')
+      update = True
+    if old_user_id == event['host']:
+      event['host'] = new_user_id
+      update_log.append(f'Updated {event["event_id"]} ({event["game"]}) host from {old_user_id} to {new_user_id}')
+      update = True
+    if old_user_id == event['organizer']:
+      event['organizer'] = new_user_id
+      update_log.append(f'Updated {event["event_id"]} ({event["game"]}) organizer from {old_user_id} to {new_user_id}')
+      update = True
+    if update:
+      event['not_attending'] = list(event['not_attending'])
+      event['attending'] = list(event['attending'])
+      event['player_pool'] = list(event['player_pool'])
+      modifyEvent(event, process_bgg_id_image=False)
+  return update_log
+
 
 if __name__ == '__main__':
+  email_alert_preferences = {
+    "rsvp_all": [],
+    "rsvp_hosted": []
+  }
+  s3 = boto3.client('s3')
+  s3.put_object(
+    Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
+    Bucket=BACKEND_BUCKET,
+    Key='email_alert_preferences.json',
+    ContentType='application/json',
+    CacheControl='no-cache'
+  )
+  quit()
   
+  # all_events = getEvents()
+  # # print(json.dumps(all_events, indent=2, default=ddb_default))
+  # old_user_id = '9458a4e8-e071-7065-e414-b1cc942592ec'
+  # new_user_id = '8468c468-d0d1-7097-82fa-f70d391b0e53'
+  # update_log = replaceUserId(old_user_id, new_user_id, events=all_events)
+  # print(json.dumps(update_log, indent=2))
+  # quit()
+
+  # print(datetime.now(ZoneInfo("UTC")).isoformat())
+  # print(datetime.now().isoformat())
+  # quit()
+  # client = boto3.client('scheduler', region_name='us-east-1')
+  # response = client.get_schedule(
+  #   # GroupName='string',
+  #   Name='rsvp_alerts_schedule_dev'
+  # )
+  # response = client.list_schedules(
+  #   # GroupName='string',
+  #   # MaxResults=123,
+  #   # NamePrefix='string',
+  #   # NextToken='string',
+  #   State='DISABLED'
+  # )
+
+  # test={
+  #   # "Arn": "arn:aws:scheduler:us-east-1:569879156317:schedule/default/rsvp_alerts_schedule_dev",
+  #   # "CreationDate": "2024-04-01T21:29:16.524000-06:00",
+  #   # "GroupName": "default",
+  #   # "LastModificationDate": "2024-04-01T21:29:16.524000-06:00",
+  #   # "State": "DISABLED",
+  #   "Name": "rsvp_alerts_schedule_dev",
+  #   "ScheduleExpression": "at(yyyy-mm-ddThh:mm:ss)",
+  #   "Target": {
+  #     "Arn": "arn:aws:lambda:us-east-1:569879156317:function:rsvp_alerts_dev",
+  #     "RoleArn": "arn:aws:iam::569879156317:role/DEVGameKnightsEventsAPI-RsvpAlertsFunctionScheduleE-k3D73wZ1kmkS"
+  #   }
+  # }
+    # datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()
+  # print(response['ScheduleExpression'][3:-1])
+  # print(datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") )
+  # print(datetime.now(ZoneInfo("UTC")))
+  # print(datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") > datetime.now(ZoneInfo("UTC")))
+  # print(json.dumps(response, indent=2, default=ddb_default))
+  # print(datetime.now(ZoneInfo("UTC")).isoformat()[:19])
+  # print((datetime.now(ZoneInfo("UTC")) + timedelta(minutes=5)).isoformat()[:19])
+  # now = datetime.now()
+  # date_string = now.strftime("%Y%m%d%H%M%S%f")
+  # # print(date_string)
+  # date_int = int(date_string)
+  # print(date_int)
+  # print(int(datetime.now().strftime("%Y%m%d%H%M%S%f")))
+
+  quit()
+
   all_events = getEvents()
   for event in all_events:
     if 'attending' not in event:
@@ -1387,7 +1658,8 @@ if __name__ == '__main__':
   # export s3_bucket=cdkstack-bucketdevff8a9acd-pine3ubqpres
   # export table_name=game_events_dev      
   # export backend_bucket=dev-cubes-and-cardboard-backend
-  # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_dev   
+  # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_dev
+  # export rsvp_sqs_url=https://sqs.us-east-1.amazonaws.com/569879156317/sqs_rsvp_alerts_dev.fifo  
   # export mode=dev
 
   # # Prod:
@@ -1396,6 +1668,7 @@ if __name__ == '__main__':
   # export table_name=game_events
   # export backend_bucket=prod-cubes-and-cardboard-backend
   # export sns_topic=arn:aws:sns:us-east-1:569879156317:BggPictureSnsTopic_prod 
+  # export rsvp_sqs_url=placeholder
   # export mode=prod
   
   updatePublicEventsJson()
