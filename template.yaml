@@ -389,10 +389,6 @@ Resources:
                 - iam:PassRole
               Resource:
                 - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/rsvp_alerts_schedule_${Mode}"
-                # - arn:aws:iam::569879156317:role/DEVGameKnightsEventsAPI-RsvpAlertsFunctionScheduleE-k3D73wZ1kmkS
-                # - !Sub
-                #   - "arn:aws:iam::${AWS::AccountId}:role/${stackname}-RsvpAlertsFunctionSchedule*"
-                #   - stackname: !FindInMap [EnvMap, !Ref Mode, StackName]
                 - !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
 
   BggSearchFunction:
@@ -473,40 +469,8 @@ Resources:
         Sourcemap: true
         EntryPoints:
           - app.ts
-
-  # RsvpAlertsFunction:
-  #   Type: AWS::Serverless::Function
-  #   Properties:
-  #     FunctionName: !Sub "rsvp_alerts_${Mode}"
-  #     CodeUri: rsvp_alerts/
-  #     Handler: rsvp_alerts.lambda_handler
-  #     Runtime: python3.12
-  #     MemorySize: 256
-  #     Timeout: 30
-  #     Environment:
-  #       Variables:
-  #         rsvp_sqs_url: !Ref RsvpAlertSqsQueue
-  #     Events:
-  #       ScheduleEvent:
-  #         Type: ScheduleV2
-  #         Properties:
-  #           Name: !Sub "rsvp_alerts_schedule_${Mode}"
-  #           # ScheduleExpression: "rate(1 day)" #"at(yyyy-mm-ddThh:mm:ss)" 2024-04-02T03:47:00
-  #           ScheduleExpression: "at(2024-04-02T03:59:00)"
-  #           State: DISABLED
-  #       # MySQSEvent:
-  #       #   Type: SQS
-  #       #   Properties:
-  #       #     Queue: !GetAtt RsvpAlertSqsQueue.Arn
-  #       #     MaximumBatchingWindowInSeconds: 20
-  #       #     BatchSize: 60
-  #     Policies:
-  #       - SESCrudPolicy:
-  #           IdentityName: cubesandcardboard.net
-  #       - SQSPollerPolicy:
-  #           QueueName: !GetAtt RsvpAlertSqsQueue.QueueName
-  #     Tags:
-  #       Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+        External:
+          - emitter
 
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function

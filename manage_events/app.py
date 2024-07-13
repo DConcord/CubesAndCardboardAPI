@@ -1527,6 +1527,7 @@ def replaceUserId(old_user_id, new_user_id, events=None):
 
 if __name__ == '__main__':
   email_alert_preferences = {
+    "rsvp_all_debug": [],
     "rsvp_all": [],
     "rsvp_hosted": []
   }
@@ -1538,6 +1539,7 @@ if __name__ == '__main__':
     ContentType='application/json',
     CacheControl='no-cache'
   )
+  print("email_alert_preferences.json uploaded")
   quit()
   
   # all_events = getEvents()

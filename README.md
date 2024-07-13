@@ -12,10 +12,10 @@ brew install aws-sam-cli
 aws s3 cp swagger.yaml s3://cp-sam-deploy-east1/
 ``` -->
 
-Install esbuild globally
+Install esbuild in the root of the project folder
 
 ```
-npm install -g esbuild
+npm install
 ```
 
 <!-- ## sam package -->
@@ -44,12 +44,14 @@ sam delete --stack-name GameKnightsEventsAPI --region us-east-1
 ## Dev
 
 ```
+aws s3 cp ./rsvp_alerts_ts/template.html s3://dev-cubes-and-cardboard-backend && \
 sam build --config-env dev && sam deploy --config-env dev && date
 ```
 
 ## Prod
 
 ```
+aws s3 cp ./rsvp_alerts_ts/template.html s3://prod-cubes-and-cardboard-backend && \
 sam build --config-env prod && sam deploy --config-env prod && date
 ```
 
@@ -82,4 +84,20 @@ Initialize and Retrieve Node modules _<strong>in the JS Lambda folder</strong>_.
 ```
 cd ./rsvp_alerts_ts
 npm install
+```
+
+Export environment variables locally. Dev or example:
+
+```
+export RSVP_SQS_URL=X
+export S3_BUCKET=cdkstack-bucketdevff8a9acd-pine3ubqpres
+export TABLE_NAME=game_events_dev
+```
+
+Build the code in JS (can't run TS directly, it wraps JS) with SAM in the project root and run with node
+
+```
+cd ..
+sam build --config-env dev
+node .aws-sam/build/RsvpAlertsFunction/app.js
 ```
