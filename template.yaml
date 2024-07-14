@@ -29,15 +29,15 @@ Mappings:
     prod:
       CloudFrontS3Bucket: cdkstack-bucket83908e77-7tr0zgs93uwh
       EventsTableName: game_events
-      BggPictureSqsQueueName: bgg_picture_sqs_queue
       ApiGatewayName: Game Knights Events API
       OwnerTag: EventsAPI
+      StackName: GameKnightsEventsAPI
     dev:
       CloudFrontS3Bucket: cdkstack-bucketdevff8a9acd-pine3ubqpres
       EventsTableName: game_events_dev
-      BggPictureSqsQueueName: bgg_picture_sqs_queue_dev
       ApiGatewayName: Game Knights Events API DEV
       OwnerTag: DevEventsAPI
+      StackName: DEVGameKnightsEventsAPI
 
 Resources:
   EventsApiGateway:
@@ -109,12 +109,12 @@ Resources:
   ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
       FunctionName: !Sub manage_events_${Mode}
       CodeUri: manage_events/
       Handler: app.lambda_handler
       Runtime: python3.12
+      Architectures:
+        - arm64
       MemorySize: 512
       Timeout: 30
       Events:
@@ -286,6 +286,50 @@ Resources:
             Auth:
               Authorizer: NONE
 
+        # /alerts
+        GetAlerts:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        AlertsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
+        # /alerts/player
+        GetAlertsPlayer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts/player
+            Method: GET
+            Auth:
+              Authorizer: CognitoPasswordless
+        PutAlertsPlayer:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts/player
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless
+        AlertsPlayerOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /alerts/player
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
       Environment:
@@ -294,7 +338,7 @@ Resources:
           table_name_prod: !If [isDev, !ImportValue EventsTable-prod-GameKnightsEventsAPI, ""]
           table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
           s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
-          # sqs_url: !Ref BggPictureSqsQueue
+          rsvp_sqs_url: !Ref RsvpAlertSqsQueue
           sns_topic: !Ref BggPictureSnsTopic
           backend_bucket: !Ref BackendBucket
 
@@ -306,8 +350,8 @@ Resources:
           - DynamoDBReadPolicy:
               TableName: !ImportValue EventsTable-prod-GameKnightsEventsAPI
           - !Ref "AWS::NoValue"
-        # - SQSSendMessagePolicy:
-        #     QueueName: !GetAtt BggPictureSqsQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt RsvpAlertSqsQueue.QueueName
         - S3CrudPolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
         - S3CrudPolicy:
@@ -337,16 +381,25 @@ Resources:
               Resource:
                 - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/manage_events_${Mode}:*"
                 - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/manage_events_${Mode}:log-stream:*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - scheduler:GetSchedule
+                - scheduler:UpdateSchedule
+                - iam:PassRole
+              Resource:
+                - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/rsvp_alerts_schedule_${Mode}"
+                - !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
 
   BggSearchFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
       FunctionName: !Sub "BggSearch_${Mode}"
       CodeUri: bgg_search/
       Handler: bgg_search.lambda_handler
       Runtime: python3.12
+      Architectures:
+        - arm64
       MemorySize: 512
       Timeout: 30
       Events:
@@ -367,15 +420,67 @@ Resources:
             Auth:
               Authorizer: NONE
 
+  RsvpAlertsFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      FunctionName: !Sub "rsvp_alerts_${Mode}"
+      CodeUri: rsvp_alerts_ts/
+      Handler: app.lambdaHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          MODE: !Ref Mode
+          RSVP_SQS_URL: !Ref RsvpAlertSqsQueue
+          S3_BUCKET: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          TABLE_NAME: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
+          BACKEND_BUCKET: !Ref BackendBucket
+          NODE_OPTIONS: --enable-source-maps
+      Events:
+        ScheduleEvent:
+          # Initial Scheduled event placeholder (modified by the 'manage_events' lambda after each RSVP change)
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub "rsvp_alerts_schedule_${Mode}"
+            # ScheduleExpression: "rate(1 day)" #"at(yyyy-mm-ddThh:mm:ss)" 2024-04-02T03:47:00
+            ScheduleExpression: "at(2024-04-02T03:59:00)"
+            State: DISABLED
+      Policies:
+        - SESCrudPolicy:
+            IdentityName: cubesandcardboard.net
+        - SQSPollerPolicy:
+            QueueName: !GetAtt RsvpAlertSqsQueue.QueueName
+        - S3ReadPolicy:
+            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+        - S3ReadPolicy:
+            BucketName: !Ref BackendBucket
+        - DynamoDBReadPolicy:
+            TableName: !Ref EventsTable
+      Tags:
+        Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+    Metadata: # Manage esbuild properties
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: "es2022"
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+        External:
+          - emitter
+
   RetrieveBGGImageFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures:
-        - arm64
       FunctionName: !Sub "RetrieveBGGImage_${Mode}"
       CodeUri: bgg_picture/
       Handler: app.lambda_handler
       Runtime: python3.12
+      Architectures:
+        - arm64
       MemorySize: 512
       Timeout: 30
       Events:
@@ -383,11 +488,6 @@ Resources:
           Type: SNS
           Properties:
             Topic: !Ref BggPictureSnsTopic
-        # MySQSEvent:
-        #   Type: SQS
-        #   Properties:
-        #     Queue: !GetAtt BggPictureSqsQueue.Arn
-        #     BatchSize: 10
       Policies:
         - S3ReadPolicy:
             BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
@@ -405,13 +505,16 @@ Resources:
         - Key: Owner
           Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
-  # BggPictureSqsQueue:
-  #   Type: AWS::SQS::Queue
-  #   Properties:
-  #     QueueName: !FindInMap [EnvMap, !Ref Mode, BggPictureSqsQueueName]
-  #     Tags:
-  #       - Key: Owner
-  #         Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+  RsvpAlertSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      ContentBasedDeduplication: true
+      QueueName: !Sub "sqs_rsvp_alerts_${Mode}.fifo"
+      FifoQueue: true
+      VisibilityTimeout: 700
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
 Outputs:
   EventsApiGateway:
@@ -426,8 +529,8 @@ Outputs:
     Value: !GetAtt EventsApiGateway.RootResourceId
     Export:
       Name: !Sub "EventsApiGateway-RootResourceId-${Mode}"
-  # SQSUrl:
-  #   Value: !Ref BggPictureSqsQueue
+  RsvpSQSUrl:
+    Value: !Ref RsvpAlertSqsQueue
   SNSTopic:
     Value: !Ref BggPictureSnsTopic
   BackendBucket:
@@ -436,3 +539,5 @@ Outputs:
     Value: !Ref EventsTable
     Export:
       Name: !Sub "EventsTable-${Mode}-${AWS::StackName}"
+  RsvpAlertsFunctionScheduleEventRoleArn:
+    Value: !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn

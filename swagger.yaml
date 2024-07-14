@@ -892,6 +892,149 @@ paths:
           application/json: '{"statusCode": 200}'
         passthroughBehavior: when_no_match
         type: mock
+
+  /alerts:
+    get:
+      tags:
+        - alerts
+      summary: list email alerts subscriptions
+      description: |
+        List game knight event email alert subscriptions/preferences.
+      operationId: getAlerts
+      responses:
+        "200":
+          description: list all events
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'GET,HEAD,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+
+  /alerts/player:
+    get:
+      tags:
+        - alerts
+      summary: list email alerts subscriptions for a specific player
+      description: |
+        List game knight event email alert subscriptions/preferences for a specific player.
+      operationId: getAlertsPlayer
+      parameters:
+        - name: user_id
+          in: body
+          description: Player id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: get player's alerts
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+    put:
+      tags:
+        - alerts
+      summary: Update player's email alerts subscriptions
+      description: |
+        Update player's email alerts subscriptions.
+      operationId: putAlertsPlayer
+      x-amazon-apigateway-request-validator: body-headers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - user_id
+                - alert_subscriptions
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                alert_subscriptions:
+                  type: object
+      responses:
+        "201":
+          description: event updated
+        "400":
+          description: "invalid input, object invalid"
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'GET,HEAD,OPTIONS,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+
 components:
   schemas:
     NewEvent:
