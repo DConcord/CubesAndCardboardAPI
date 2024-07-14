@@ -182,7 +182,7 @@ def lambda_handler(apiEvent, context):
                   'auth_sub': auth_sub,
                   'auth_type': 'admin',
                   'event_id': data['event_id'],
-                  'date': current_event['date'],
+                  'date': event['date'],
                   'user_id': player,
                   'action': rsvp['action'],
                   'rsvp': rsvp['rsvp'],
@@ -232,11 +232,11 @@ def lambda_handler(apiEvent, context):
           no_change = set()
           for rsvp in ['attending', 'not_attending']:
             if rsvp in event_prev:
-              all_rsvp = all_rsvp.union(event_prev[rsvp])
+              all_rsvp = all_rsvp.union(set(event_prev[rsvp]))
             if rsvp in event_new:
-              all_rsvp = all_rsvp.union(event_new[rsvp])
+              all_rsvp = all_rsvp.union(set(event_new[rsvp]))
             if rsvp in event_prev and rsvp in event_new:
-              no_change = no_change.union(event_prev[rsvp].intersection(event_new[rsvp]))
+              no_change = no_change.union(set(event_prev[rsvp]).intersection(set(event_new[rsvp])))
           
           if all_rsvp:
             rsvp_change = all_rsvp - no_change
@@ -1526,21 +1526,21 @@ def replaceUserId(old_user_id, new_user_id, events=None):
 
 
 if __name__ == '__main__':
-  email_alert_preferences = {
-    "rsvp_all_debug": [],
-    "rsvp_all": [],
-    "rsvp_hosted": []
-  }
-  s3 = boto3.client('s3')
-  s3.put_object(
-    Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
-    Bucket=BACKEND_BUCKET,
-    Key='email_alert_preferences.json',
-    ContentType='application/json',
-    CacheControl='no-cache'
-  )
-  print("email_alert_preferences.json uploaded")
-  quit()
+  # email_alert_preferences = {
+  #   "rsvp_all_debug": [],
+  #   "rsvp_all": [],
+  #   "rsvp_hosted": []
+  # }
+  # s3 = boto3.client('s3')
+  # s3.put_object(
+  #   Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
+  #   Bucket=BACKEND_BUCKET,
+  #   Key='email_alert_preferences.json',
+  #   ContentType='application/json',
+  #   CacheControl='no-cache'
+  # )
+  # print("email_alert_preferences.json uploaded")
+  # quit()
   
   # all_events = getEvents()
   # # print(json.dumps(all_events, indent=2, default=ddb_default))
