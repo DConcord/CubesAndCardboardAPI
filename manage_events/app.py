@@ -9,7 +9,6 @@ import uuid
 import botocore
 import time
 import os
-# from copy import deepcopy
 
 TABLE_NAME = os.environ['table_name'] # 'game_events'
 S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
@@ -72,9 +71,10 @@ def lambda_handler(apiEvent, context):
 
         # Create Event
         case 'POST':
-          if not authorize(apiEvent, auth_groups, ['admin']):
-            return unauthorized
           print('Create Event')
+          if not authorize(apiEvent, auth_groups, ['admin']):
+            print('Not authorized. User is not admin')
+            return unauthorized
           data = json.loads(apiEvent['body'])
           if len(data['date']) <= 19:
             data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()            
@@ -88,6 +88,7 @@ def lambda_handler(apiEvent, context):
             'new': json.dumps(data, default=ddb_default),
             'action': 'create',
           }, default=ddb_default))
+          
           print('Update Player Pools')
           updatePlayerPools()
           print('Event Created; Publish public events.json')
@@ -105,7 +106,7 @@ def lambda_handler(apiEvent, context):
         
         # Modify Event
         case 'PUT':
-          if not authorize(apiEvent, auth_groups, ['admin']): 
+          if not authorize(apiEvent, auth_groups, ['admin'], log_if_false=False): 
             print('Check for Event Host')
             data = json.loads(apiEvent['body'])
             event = getEvent(data['event_id'])
@@ -180,7 +181,7 @@ def lambda_handler(apiEvent, context):
                 rsvp_dict = {
                   'log_type': 'rsvp',
                   'auth_sub': auth_sub,
-                  'auth_type': 'admin',
+                  'auth_type': 'host',
                   'event_id': data['event_id'],
                   'date': event['date'],
                   'user_id': player,
@@ -221,10 +222,10 @@ def lambda_handler(apiEvent, context):
             'auth_type': 'admin',
             'event_id': data['event_id'],
             'date': current_event['date'],
-            'previous': event_prev,
-            'new': event_new,
-            # 'previous': json.dumps(event_prev, default=ddb_default),
-            # 'new': json.dumps(event_new, default=ddb_default),
+            # 'previous': event_prev,
+            # 'new': event_new,
+            'previous': json.dumps(event_prev, default=ddb_default),
+            'new': json.dumps(event_new, default=ddb_default),
             'new_final': data,
             'action': 'modify',
           }, default=ddb_default))
@@ -289,10 +290,11 @@ def lambda_handler(apiEvent, context):
                    
         # Delete Event
         case 'DELETE':
+          print('Delete Event')
           if not authorize(apiEvent, auth_groups, ['admin']): 
+            print(f"WARNING: user_id '{auth_sub}' is not an admin. not authorized")
             return unauthorized
           
-          print('Delete Event')
           event_id = apiEvent['queryStringParameters']['event_id'] 
           current_event = getEvent(event_id)
           response = deleteEvent(event_id)
@@ -431,7 +433,7 @@ def lambda_handler(apiEvent, context):
          
         # Get Players
         case 'GET':
-          if authorize(apiEvent, auth_groups, ['admin']): 
+          if authorize(apiEvent, auth_groups, ['admin'], log_if_false=False): 
             print('Get Players (admin)')
             refresh = "no"
             if apiEvent['queryStringParameters'] and apiEvent['queryStringParameters']['refresh']:
@@ -459,7 +461,9 @@ def lambda_handler(apiEvent, context):
         
         # Create new Player
         case 'POST':
-          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test
+          print('Create Player')
+          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test            
+            print(f"WARNING: user_id '{auth_sub}' is not authorized to create players")
             return unauthorized
           
           data = json.loads(apiEvent['body'])
@@ -506,7 +510,9 @@ def lambda_handler(apiEvent, context):
 
         # Update Existing Player
         case 'PUT':
+          print('Update Player')
           if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test
+            print(f"WARNING: user_id '{auth_sub}' is not authorized to update players")
             return unauthorized
           
           user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
@@ -673,6 +679,19 @@ def lambda_handler(apiEvent, context):
             for attrib in user['Attributes']:
               user_dict['Users'][user_id]['attrib'][attrib['Name']] = attrib['Value']
 
+            try:
+              print(json.dumps({
+                'log_type': 'player',
+                'auth_sub': auth_sub,
+                'auth_type': 'self',
+                'user_id': user_id,
+                'action': 'update',
+                'attrib': ', '.join([attrib['Name'] for attrib in attrib_changes]),
+              }))
+            except Exception as e:
+              print(json.dumps(attrib_changes))
+              raise
+
             updatePlayersGroupsJson(players_groups=user_dict)
             return {
               'statusCode': 201,
@@ -680,6 +699,11 @@ def lambda_handler(apiEvent, context):
               'body': json.dumps({'message': 'Attributes Updated', 'response': attrib_response}, indent=2, default=ddb_default)
             }
           else:
+            print(json.dumps({
+              'old_attributes != new_attributes': old_attributes != new_attributes, 
+              'new_attributes': new_attributes,
+              'old_attributes': old_attributes
+              }, default=ddb_default))
             return {
               'statusCode': 201,
               'headers': {'Access-Control-Allow-Origin': origin},
@@ -691,8 +715,9 @@ def lambda_handler(apiEvent, context):
 
         # Get activity logs. Admin only
         case 'GET':
-          
+          print("Get Activity Logs")          
           if not authorize(apiEvent, auth_groups, ['admin']):
+            print(f"WARNING: user_id '{auth_sub}' is not authorized to get activity logs")
             return unauthorized
           
           data = apiEvent['queryStringParameters']
@@ -713,7 +738,7 @@ def lambda_handler(apiEvent, context):
 
           client = boto3.client('logs')
           # query = "fields @timestamp, @message | parse @message \"username: * ClinicID: * nodename: *\" as username, ClinicID, nodename | filter ClinicID = 7667 and username='simran+test@example.com'"
-          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp"] | sort @timestamp desc'
+          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp", "email_subscription"] | sort @timestamp desc'
           log_group = f'/aws/lambda/manage_events_{MODE}'
           start_query_response = client.start_query(
               logGroupName=log_group,
@@ -751,7 +776,9 @@ def lambda_handler(apiEvent, context):
     case '/alerts':
       match method:
         case 'GET':
+          print("Get Email Alert subscriptions")
           if not authorize(apiEvent, auth_groups, ['admin']):
+            print(f"WARNING: user_id '{auth_sub}' is not authorized")
             return unauthorized
           email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
           return {
@@ -790,6 +817,11 @@ def lambda_handler(apiEvent, context):
           if not authorize(apiEvent, auth_groups, ['admin']) and auth_sub != data['user_id']:
             print(f"UNAUTHORIZED: user is not an admin and user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
             return unauthorized
+          
+          if auth_sub == data['user_id']:
+            auth_type = "self"
+          else:
+            auth_type = "admin"
           alert_subscriptions = data['alert_subscriptions']
           email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
           email_alert_preferences = {alert_type: set(subscriber_list) for alert_type, subscriber_list in email_alert_preferences.items()}
@@ -799,15 +831,34 @@ def lambda_handler(apiEvent, context):
               # print(f"WARNING: Email Alert type '{alert_type}' does not exist")
               # continue
               email_alert_preferences[alert_type] = set()
-            
+
             if subscribed:
-              email_alert_preferences[alert_type].add(user_id)
+              if user_id not in email_alert_preferences[alert_type]:
+                email_alert_preferences[alert_type].add(user_id)
+                print(json.dumps({
+                  'log_type': 'email_subscription',
+                  'auth_sub': auth_sub,
+                  'user_id': data['user_id'],
+                  'auth_type': auth_type,
+                  'action': 'subscribe',
+                  'attrib': alert_type,
+                }, default=ddb_default))
             else:
               if user_id in email_alert_preferences[alert_type]:
                 email_alert_preferences[alert_type].remove(user_id)
+                print(json.dumps({
+                  'log_type': 'email_subscription',
+                  'auth_sub': auth_sub,
+                  'user_id': data['user_id'],
+                  'auth_type': auth_type,
+                  'action': 'unsubscribe',
+                  'attrib': alert_type,
+                }, default=ddb_default))
 
-          # Those subscribed to rsvp_all cannot also be subscribed to rsvp_hosted
-          email_alert_preferences["rsvp_hosted"] = email_alert_preferences["rsvp_hosted"] - email_alert_preferences["rsvp_all"]
+          # Those subscribed to rsvp_all & _debug cannot also be subscribed to rsvp_hosted
+          email_alert_preferences["rsvp_hosted"] = email_alert_preferences["rsvp_hosted"] - email_alert_preferences["rsvp_all"] - email_alert_preferences["rsvp_all_debug"]
+          # Those subscribed to rsvp_all_debug cannot also be subscribed to rsvp_all
+          email_alert_preferences["rsvp_all"] = email_alert_preferences["rsvp_all"] - email_alert_preferences["rsvp_all_debug"]
 
           s3 = boto3.client('s3')
           s3.put_object(
@@ -824,7 +875,7 @@ def lambda_handler(apiEvent, context):
           }
 
   print('Unhandled Method or Path')
-  if authorize(apiEvent, auth_groups, ['admin']):
+  if authorize(apiEvent, auth_groups, ['admin'], log_if_false=False):
     return {
       'statusCode': 200, #204,
       'headers': {'Access-Control-Allow-Origin': origin},
