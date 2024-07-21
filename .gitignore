@@ -266,3 +266,5 @@ bgg_picture/new
 bgg_picture/tmp
 
 rsvp_alerts_ts/app.js
+
+rsvp_alerts_ts/testHTML/prev/*
