@@ -9,6 +9,7 @@ import uuid
 import botocore
 import time
 import os
+from copy import deepcopy
 
 TABLE_NAME = os.environ['table_name'] # 'game_events'
 S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
@@ -31,6 +32,27 @@ PULL_BGG_PIC = False
 
 def lambda_handler(apiEvent, context):
   global PULL_BGG_PIC
+
+  match apiEvent.get('action'):
+    case 'ProcessAllReservedSchedules':
+      print('Process Refresh schedules for all upcoming Reserved Events')
+      print(json.dumps(apiEvent))
+      upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).isoformat()[:19])
+      print(json.dumps({"upcomingEvents": [{'event_id': event['event_id'], 'format': event['format'], 'date': event['date']}  for event in upcomingEvents]}, default=ddb_default))
+      for event in upcomingEvents:
+        if event['format'] == 'Reserved':
+          process_reserved_event_scheduled_tasks(reserved_event=event, action='create', target_arn=context.invoked_function_arn)
+      return {'statusCode': 200, 'body': 'OK'}
+
+    case 'updatePlayerPools':
+      time.sleep(1)
+      print('apiEvent.action: Update Player Pools')
+      print(json.dumps(apiEvent))
+      updatePlayerPools()
+      print('Publish public events.json')
+      updatePublicEventsJson()
+      return {'statusCode': 200, 'body': 'OK'}
+
   origin = '*'
   if apiEvent and 'headers' in apiEvent and apiEvent['headers'] and 'Origin' in apiEvent['headers'] and apiEvent['headers']['Origin']:
     origin = apiEvent['headers']['Origin']
@@ -77,7 +99,7 @@ def lambda_handler(apiEvent, context):
             return unauthorized
           data = json.loads(apiEvent['body'])
           if len(data['date']) <= 19:
-            data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()            
+            data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo('America/Denver')).isoformat()            
           response = createEvent(data)
           print(json.dumps({
             'log_type': 'event',
@@ -98,6 +120,9 @@ def lambda_handler(apiEvent, context):
             if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
           except Exception as e:
               print(e)
+          if data['format'] == 'Reserved':
+            data['event_id'] = response['event_id']
+            process_reserved_event_scheduled_tasks(reserved_event=data, action='create', target_arn=context.invoked_function_arn)
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -118,7 +143,7 @@ def lambda_handler(apiEvent, context):
             event_updates = { k: data[k] for k in host_modifiable.intersection(set({**diff['added'], **diff['modified']}))}
             for key in  diff['removed']:
               if key not in event_updates and key in host_modifiable:
-                event_updates[key] = ""
+                event_updates[key] = ''
             if event_updates == {}:
               return {
                 'statusCode': 204,
@@ -190,8 +215,7 @@ def lambda_handler(apiEvent, context):
                 }
                 print(json.dumps(rsvp_dict))
                 send_rsvp_sqs(rsvp_dict)
-
-            # print(json.dumps({"host": data['host'], "updates": event_updates, "original": event}, default=ddb_default))            
+          
             print('Update Player Pools')
             updatePlayerPools()
             print('Event Modified; Publish public events.json')
@@ -211,7 +235,23 @@ def lambda_handler(apiEvent, context):
           data = json.loads(apiEvent['body'])
           current_event = getEvent(data['event_id'])
           if len(data['date']) <= 19:
-            data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo("America/Denver")).isoformat()
+            data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo('America/Denver')).isoformat()
+          # Check if event format has changed to/from 'Reserved' or if reserved event date has changed
+          if (
+            'Reserved' in [current_event['format'], data['format']]  
+            and (current_event['format'] != data['format'] or current_event['date'] != data['date'])
+          ):
+            if current_event['format'] != data['format']:
+              if current_event['format'] == 'Reserved':
+                # Delete the scheduled task for the no-longer reserved event
+                _action = 'delete'
+              else:
+                # Create a new scheduled task for the newly reserved event
+                _action = 'create'
+            else:
+              # Update the scheduled task for the existing event's new date
+              _action = 'update'
+            process_reserved_event_scheduled_tasks(reserved_event=data, action=_action, target_arn=context.invoked_function_arn)
           response = modifyEvent(data)
           diff = compareAttributes(current_event, data)
           event_prev = {**diff['removed'], **diff['previous']}
@@ -311,6 +351,8 @@ def lambda_handler(apiEvent, context):
           updatePlayerPools()
           print('Event Deleted; Publish public events.json')
           updatePublicEventsJson()
+          if current_event['format'] == 'Reserved':
+            process_reserved_event_scheduled_tasks(reserved_event=current_event, action='delete', target_arn=context.invoked_function_arn)
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -407,11 +449,11 @@ def lambda_handler(apiEvent, context):
               dateGte = data['dateGte']
           else:
             # dateGte = None # ALL
-            dateGte = datetime.now(ZoneInfo("America/Denver")).date() - timedelta(days=14)
+            dateGte = datetime.now(ZoneInfo('America/Denver')).date() - timedelta(days=14)
           
           if data and 'dateLte' in data and data['dateLte']:
             if data['dateLte'] == '14d':
-              dateLte = datetime.now(ZoneInfo("America/Denver")).date() - timedelta(days=14)
+              dateLte = datetime.now(ZoneInfo('America/Denver')).date() - timedelta(days=14)
             else:
               dateLte = data['dateLte']
           else:
@@ -419,7 +461,7 @@ def lambda_handler(apiEvent, context):
           
           events = getEvents(dateGte = dateGte, dateLte = dateLte)
 
-          # If not an admin, filter out "private" events of which the member is not in the player pool
+          # If not an admin, filter out 'private' events of which the member is not in the player pool
           if not authorize(apiEvent, auth_groups, ['admin'], log_if_false=False):
             events = [event for event in events if not (event['format'] == 'Private' and auth_sub not in event['player_pool'])]
           return {
@@ -435,7 +477,7 @@ def lambda_handler(apiEvent, context):
         case 'GET':
           if authorize(apiEvent, auth_groups, ['admin'], log_if_false=False): 
             print('Get Players (admin)')
-            refresh = "no"
+            refresh = 'no'
             if apiEvent['queryStringParameters'] and apiEvent['queryStringParameters']['refresh']:
               refresh = apiEvent['queryStringParameters']['refresh'].lower()
 
@@ -535,7 +577,7 @@ def lambda_handler(apiEvent, context):
               attrib_changes.append({'Name': attribute, 'Value': value})
               changes.append(attribute)
             for attribute, value in diff['removed'].items():
-              attrib_changes.append({'Name': attribute, 'Value': ""})
+              attrib_changes.append({'Name': attribute, 'Value': ''})
               changes.append(attribute)
 
             if 'email' in changes:
@@ -618,7 +660,7 @@ def lambda_handler(apiEvent, context):
 
         # Player updating their own attributes
         case 'PUT':
-          print("Player update own attributes")
+          print('Player update own attributes')
           data = json.loads(apiEvent['body'])
           user_id = data['user_id']
           if auth_sub != data['user_id']:
@@ -642,7 +684,7 @@ def lambda_handler(apiEvent, context):
             for attribute, value in {**diff['added'], **diff['modified']}.items():
               attrib_changes.append({'Name': attribute, 'Value': value})
             for attribute, value in diff['removed'].items():
-              attrib_changes.append({'Name': attribute, 'Value': ""})
+              attrib_changes.append({'Name': attribute, 'Value': ''})
             try:
               client = boto3.client('cognito-idp')
               attrib_response = client.update_user_attributes(
@@ -715,7 +757,7 @@ def lambda_handler(apiEvent, context):
 
         # Get activity logs. Admin only
         case 'GET':
-          print("Get Activity Logs")          
+          print('Get Activity Logs')          
           if not authorize(apiEvent, auth_groups, ['admin']):
             print(f"WARNING: user_id '{auth_sub}' is not authorized to get activity logs")
             return unauthorized
@@ -737,8 +779,7 @@ def lambda_handler(apiEvent, context):
             endTime = int(datetime.now().timestamp())
 
           client = boto3.client('logs')
-          # query = "fields @timestamp, @message | parse @message \"username: * ClinicID: * nodename: *\" as username, ClinicID, nodename | filter ClinicID = 7667 and username='simran+test@example.com'"
-          query = 'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp", "email_subscription"] | sort @timestamp desc'
+          query = f'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp", "email_subscription"] | sort @timestamp desc'
           log_group = f'/aws/lambda/manage_events_{MODE}'
           start_query_response = client.start_query(
               logGroupName=log_group,
@@ -755,7 +796,6 @@ def lambda_handler(apiEvent, context):
               response = client.get_query_results(
                   queryId=query_id
               )
-          from copy import deepcopy
           _response = deepcopy(response)
           _response['results'] = []
           for result in response['results']:
@@ -776,7 +816,7 @@ def lambda_handler(apiEvent, context):
     case '/alerts':
       match method:
         case 'GET':
-          print("Get Email Alert subscriptions")
+          print('Get Email Alert subscriptions')
           if not authorize(apiEvent, auth_groups, ['admin']):
             print(f"WARNING: user_id '{auth_sub}' is not authorized")
             return unauthorized
@@ -819,9 +859,9 @@ def lambda_handler(apiEvent, context):
             return unauthorized
           
           if auth_sub == data['user_id']:
-            auth_type = "self"
+            auth_type = 'self'
           else:
-            auth_type = "admin"
+            auth_type = 'admin'
           alert_subscriptions = data['alert_subscriptions']
           email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
           email_alert_preferences = {alert_type: set(subscriber_list) for alert_type, subscriber_list in email_alert_preferences.items()}
@@ -856,9 +896,9 @@ def lambda_handler(apiEvent, context):
                 }, default=ddb_default))
 
           # Those subscribed to rsvp_all & _debug cannot also be subscribed to rsvp_hosted
-          email_alert_preferences["rsvp_hosted"] = email_alert_preferences["rsvp_hosted"] - email_alert_preferences["rsvp_all"] - email_alert_preferences["rsvp_all_debug"]
+          email_alert_preferences['rsvp_hosted'] = email_alert_preferences['rsvp_hosted'] - email_alert_preferences['rsvp_all'] - email_alert_preferences['rsvp_all_debug']
           # Those subscribed to rsvp_all_debug cannot also be subscribed to rsvp_all
-          email_alert_preferences["rsvp_all"] = email_alert_preferences["rsvp_all"] - email_alert_preferences["rsvp_all_debug"]
+          email_alert_preferences['rsvp_all'] = email_alert_preferences['rsvp_all'] - email_alert_preferences['rsvp_all_debug']
 
           s3 = boto3.client('s3')
           s3.put_object(
@@ -968,10 +1008,9 @@ def authorize(apiEvent, membership:list, filter_groups:list, log_if_false=True )
   return True
 
 def send_rsvp_sqs(rsvp_dict):
-  from copy import deepcopy
   rsvp_dict = deepcopy(rsvp_dict)    
-  # rsvp_dict['timestamp'] = datetime.now().strftime("%Y%m%d%H%M%S%f")
-  rsvp_dict['timestamp'] = datetime.now(ZoneInfo("UTC")).isoformat()
+  # rsvp_dict['timestamp'] = datetime.now().strftime('%Y%m%d%H%M%S%f')
+  rsvp_dict['timestamp'] = datetime.now(ZoneInfo('UTC')).isoformat()
   sqs = boto3.client('sqs')
   sqs.send_message(
     QueueUrl=RSVP_SQS_URL, 
@@ -984,21 +1023,119 @@ def process_rsvp_alert_task():
   client = boto3.client('scheduler', region_name='us-east-1')
   response = client.get_schedule(Name=f'rsvp_alerts_schedule_{MODE}')
   current_schedule = response['ScheduleExpression'][3:-1]
-  if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+"Z") > datetime.now(ZoneInfo("UTC")):
+  if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+'Z') > datetime.now(ZoneInfo('UTC')):
     print(f'Current rsvp process already scheduled ({current_schedule}) in the future')
     return
   
-  # Schedule RSVP alert batch processing for 5 minutes in the future
+  # Schedule RSVP alert batch processing for 60 (or 30) seconds in the future
   update_response = client.update_schedule(
     Name=f'rsvp_alerts_schedule_{MODE}',
-    # ScheduleExpression=f'at({(datetime.now(ZoneInfo("UTC")) + timedelta(minutes=5)).isoformat()[:19]})',
-    ScheduleExpression=f'at({(datetime.now(ZoneInfo("UTC")) + timedelta(seconds=60 if MODE == 'prod' else 30)).isoformat()[:19]})',
-    Target= response['Target'],
-    FlexibleTimeWindow={"Mode": "OFF"}
+    ScheduleExpression=f'at({(datetime.now(ZoneInfo('UTC')) + timedelta(seconds=60 if MODE == 'prod' else 30)).isoformat()[:19]})',
+    Target=response['Target'],
+    FlexibleTimeWindow={'Mode': 'OFF'}
   )
-  print(f'Scheduled RSVP alert batch processing for 5 minutes in the future')
+  print(f'Scheduled RSVP alert batch processing for {60 if MODE == 'prod' else 30} seconds in the future')
   return
   # print(json.dumps(update_response, default=ddb_default))
+
+def reserved_event_scheduled_tasks_crud(action, params):
+  print(f'{action.title()} schedule {params['Name']}')
+  client = boto3.client('scheduler', region_name='us-east-1')
+  if action == 'create':
+    try:
+      client.create_schedule(**params)
+    except Exception as err:
+      if 'ConflictException' in str(err):
+        print('WARNING: Create failed with "ConflictException". Trying Update')
+        action='update'
+        client.update_schedule(**params)
+      else: raise
+  elif action == 'update':
+    try:
+      client.update_schedule(**params)
+    except Exception as err:
+      if 'ResourceNotFoundException' in str(err):
+        print('WARNING: Update failed with "ResourceNotFoundException". Trying Create')
+        action='create'
+        client.create_schedule(**params)
+      else: raise
+  elif action == 'delete':
+    try:
+      client.delete_schedule(Name=params['Name'], GroupName=params['GroupName'])
+    except Exception as err:
+      if 'ResourceNotFoundException' in str(err):
+        print('INFO: Delete failed with "ResourceNotFoundException"')
+      else: raise
+  else:
+    raise Exception(f'Invalid action: {action}')
+  print(f'{action.title()} schedule {params["Name"]} succeeded')
+  return
+
+# is_after_sunday_midnight_of(datetime.fromisoformat(event['date']).replace(tzinfo=ZoneInfo('America/Denver')))
+def process_reserved_event_scheduled_tasks(reserved_event, action, target_arn):
+  group_name = f'reserved_rsvp_refresh_{MODE}'
+  acount_id = target_arn.split(':')[4]
+  event_date = datetime.fromisoformat(reserved_event['date']).replace(tzinfo=ZoneInfo('America/Denver'))
+  base_params = {
+    'GroupName':group_name,
+    'ScheduleExpressionTimezone':'America/Denver',
+    'Target':{
+      'Arn': target_arn,
+      'RoleArn': f'arn:aws:iam::{acount_id}:role/reserved_rsvp_refresh_scheduler_role_{MODE}',
+      'Input': json.dumps({'action': 'updatePlayerPools'}),
+      'RetryPolicy': {
+          'MaximumEventAgeInSeconds': 86400,
+          'MaximumRetryAttempts': 185
+      },
+    },
+    'FlexibleTimeWindow':{'Mode': 'OFF'},
+    'ActionAfterCompletion':'DELETE',
+    'State':'ENABLED',
+  }
+  for type in ['sunday_prior', 'event_start']:
+    _action = action
+    params = deepcopy(base_params)
+    params['Name'] = f'{type}_{reserved_event['event_id']}'
+    if _action == 'delete':
+        params = {'Name':params['Name'],'GroupName':group_name}
+    elif type == 'sunday_prior':
+      sunday_prior = event_date + relativedelta(weekday=SU(-1), hour=0, minute=0, second=0)
+      if datetime.now(ZoneInfo('America/Denver')) > sunday_prior:
+        if _action == 'create': 
+          print(f"INFO: Sunday prior to reserved event ({reserved_event['event_id']}) is in the past. Skipping Sunday refresh")
+          continue
+        _action = 'delete'
+        params = {'Name':params['Name'],'GroupName':group_name}
+      else:
+        schedule_time = (sunday_prior).isoformat()[:19]
+        params['ScheduleExpression'] = f'at({schedule_time})'
+        params['Description'] = f'Refresh RSVP eligibility midnight on Sunday ({schedule_time}) prior to the event ({event_date.isoformat()[:19]})'
+    elif type == 'event_start':
+      if datetime.now(ZoneInfo('America/Denver')) > event_date:
+        if _action == 'create': 
+          print(f"INFO: Reserved event ({reserved_event['event_id']}) is in the past. Skipping scheduled refresh")
+          continue
+        _action = 'delete'
+        params = {'Name':params['Name'],'GroupName':group_name}
+      else:
+        schedule_time = (event_date).isoformat()[:19]
+        params['ScheduleExpression'] = f'at({schedule_time})'
+        params['Description'] = f'Refresh RSVP eligibility after the event starts: {schedule_time}'
+
+    try:
+      reserved_event_scheduled_tasks_crud(_action, params)
+    except Exception as err:
+      # if 'ParamValidationError' in str(err):
+      import sys
+      err_type  = sys.exc_info()[0]
+      print(json.dumps({
+        'ERROR': str(err),
+        'err_type': str(err_type),
+        'type': type,
+        '_action': _action,
+        'params': params,
+      }))
+      raise
 
 # Check whether bgg image has already been pulled and send 
 # an SNS to trigger pulling/resizing/saving it if not
@@ -1010,7 +1147,7 @@ def process_bgg_id(bgg_id):
     PULL_BGG_PIC = True
 
     # send message to SNS
-    print(f"Sending message to SNS: f'{bgg_id}#{SNS_TOPIC_ARN}'")
+    print(f"Sending message to SNS: '{bgg_id}#{SNS_TOPIC_ARN}'")
     sns = boto3.client('sns')
     sns.publish(
       TopicArn=SNS_TOPIC_ARN,
@@ -1040,9 +1177,8 @@ def waitForBggPic(bgg_id):
 
 
 def createEvent(eventDict, process_bgg_id_image=True):
-  from copy import deepcopy
   eventDict = deepcopy(eventDict)    
-  event_id = eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())  # temp: allow supplying event_id for "Transfer" action. Remove on client side for "Clone"
+  event_id = eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())  # temp: allow supplying event_id for 'Transfer' action. Remove on client side for 'Clone'
   new_event = {
     'event_id': {'S': event_id},
     'event_type': {'S': eventDict['event_type'] if 'event_type' in eventDict else 'GameKnight'},
@@ -1092,8 +1228,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
 ## def createEvent(eventDict) 
 
 
-def modifyEvent(eventDict, process_bgg_id_image=True):   
-  from copy import deepcopy
+def modifyEvent(eventDict, process_bgg_id_image=True):  
   eventDict = deepcopy(eventDict)             
   modified_event = {
     'event_id': {'S': eventDict['event_id']},
@@ -1145,7 +1280,6 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   
 ## Update specific attributes of an event
 def updateEvent(event_id, event_updates):
-  from copy import deepcopy
   event_updates = deepcopy(event_updates)
   if 'finalScore' in event_updates and event_updates['finalScore'] != '': event_updates['finalScore'] = json.dumps(event_updates['finalScore'])
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
@@ -1328,7 +1462,7 @@ def deleteRSVP(event_id, user_id, rsvp):
 
 def is_after_sunday_midnight_of(given_date):
   # Get Sunday of the same week
-  sunday = given_date + relativedelta(weekday=SU(-1))
+  sunday = given_date + relativedelta(weekday=SU(-1), hour=0, minute=0, second=0)
 
   # Compare current datetime to midnight of that Sunday
   tzinfo = given_date.tzinfo
@@ -1361,9 +1495,15 @@ def updatePlayerPools():
   players_spent = set()
   organizers_spent = set()
   event_updates = defaultdict(dict)
-  upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).date())
+  upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).isoformat()[:19])
+  # upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).date()) # 
 
-  print(json.dumps({"init event_updates": event_updates}, default=ddb_default))
+  # print(json.dumps({
+  #   "upcomingEvents": [{'event_id': event['event_id'], 'format': event['format'], 'date': event['date']}  for event in upcomingEvents],
+  #   "now": datetime.now(ZoneInfo("America/Denver")).isoformat()[:19],
+  #   "in2hr": (datetime.now(ZoneInfo("America/Denver")) + timedelta(hours=2)).isoformat()[:19],
+  #   "date": datetime.now(ZoneInfo("America/Denver")).date().isoformat()[:19]
+  # }, default=ddb_default))
 
   ## First round: organizers_spent
   for event in upcomingEvents:
@@ -1372,7 +1512,7 @@ def updatePlayerPools():
       event['format'] == 'Open' or 
       (event['format'] == 'Reserved' and 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True)
     ):
-      if set(players) != set(event["player_pool"]):
+      if set(players) != set(event['player_pool']):
         print(f"event {event['event_id']} update 1")
         event_updates[event['event_id']]['player_pool'] = set(players)
       if 'organizer_pool' not in event or set(organizers) != set(event["organizer_pool"]):
@@ -1427,7 +1567,6 @@ def updatePlayerPools():
     
     # If its after midnight the sunday before the event, open the player and organizer pool if not already
     if is_after_sunday_midnight_of(datetime.fromisoformat(event['date']).replace(tzinfo=ZoneInfo("America/Denver"))):
-    # if is_after_sunday_midnight_of(datetime.fromisoformat(event['date'])):
       if set(players) != set(event["player_pool"]):
         print(f"event {event['event_id']} update 5")
         event_updates[event['event_id']]['player_pool'] = set(players)
