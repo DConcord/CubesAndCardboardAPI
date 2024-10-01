@@ -1021,7 +1021,7 @@ def send_rsvp_sqs(rsvp_dict):
 
 def process_rsvp_alert_task():
   client = boto3.client('scheduler', region_name='us-east-1')
-  response = client.get_schedule(Name=f'rsvp_alerts_schedule_{MODE}')
+  response = client.get_schedule(Name=f'rsvp_alerts_schedule_{MODE}', GroupName=f'rsvp_alerts_{MODE}')
   current_schedule = response['ScheduleExpression'][3:-1]
   if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+'Z') > datetime.now(ZoneInfo('UTC')):
     print(f'Current rsvp process already scheduled ({current_schedule}) in the future')
@@ -1030,6 +1030,7 @@ def process_rsvp_alert_task():
   # Schedule RSVP alert batch processing for 60 (or 30) seconds in the future
   update_response = client.update_schedule(
     Name=f'rsvp_alerts_schedule_{MODE}',
+    GroupName=f'rsvp_alerts_{MODE}',
     ScheduleExpression=f'at({(datetime.now(ZoneInfo('UTC')) + timedelta(seconds=60 if MODE == 'prod' else 30)).isoformat()[:19]})',
     Target=response['Target'],
     FlexibleTimeWindow={'Mode': 'OFF'}
