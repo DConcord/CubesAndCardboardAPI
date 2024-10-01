@@ -106,6 +106,46 @@ Resources:
         - Key: Owner
           Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
+  RsvpAlertsScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub rsvp_alerts_${Mode}
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ReservedRsvpRefreshScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub reserved_rsvp_refresh_${Mode}
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ReservedRsvpRefreshScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub reserved_rsvp_refresh_scheduler_role_${Mode}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Description: !Sub Role used by reserved_rsvp_refresh_${Mode} schedules
+      Policies:
+        - PolicyName: InvokeManageEventsFunction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action: lambda:InvokeFunction
+                Resource: !GetAtt ManageEventsFunction.Arn
+                Effect: Allow
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
   ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -329,7 +369,6 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
-
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
       Environment:
@@ -341,7 +380,6 @@ Resources:
           rsvp_sqs_url: !Ref RsvpAlertSqsQueue
           sns_topic: !Ref BggPictureSnsTopic
           backend_bucket: !Ref BackendBucket
-
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref EventsTable
@@ -388,8 +426,27 @@ Resources:
                 - scheduler:UpdateSchedule
                 - iam:PassRole
               Resource:
-                - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/rsvp_alerts_schedule_${Mode}"
+                - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${RsvpAlertsScheduleGroup}/rsvp_alerts_schedule_${Mode}"
                 - !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
+  ManageEventsFunctionRoleScheduleEventPolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: ReservedRsvpRefresh
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - scheduler:GetSchedule
+              - scheduler:UpdateSchedule
+              - scheduler:CreateSchedule
+              - scheduler:DeleteSchedule
+              - iam:PassRole
+            Resource:
+              - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ReservedRsvpRefreshScheduleGroup}/*"
+              - !GetAtt ReservedRsvpRefreshScheduleRole.Arn
+      Roles:
+        - !Ref ManageEventsFunctionRole
 
   BggSearchFunction:
     Type: AWS::Serverless::Function
@@ -445,7 +502,7 @@ Resources:
           Type: ScheduleV2
           Properties:
             Name: !Sub "rsvp_alerts_schedule_${Mode}"
-            # ScheduleExpression: "rate(1 day)" #"at(yyyy-mm-ddThh:mm:ss)" 2024-04-02T03:47:00
+            GroupName: !Ref RsvpAlertsScheduleGroup
             ScheduleExpression: "at(2024-04-02T03:59:00)"
             State: DISABLED
       Policies:
@@ -541,3 +598,5 @@ Outputs:
       Name: !Sub "EventsTable-${Mode}-${AWS::StackName}"
   RsvpAlertsFunctionScheduleEventRoleArn:
     Value: !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
+  ReservedRsvpRefreshScheduleRole:
+    Value: !GetAtt ReservedRsvpRefreshScheduleRole.Arn
