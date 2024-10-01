@@ -536,8 +536,8 @@ function formatIsoDate(isoString: string) {
 }
 
 const websiteFQDN = {
-  dev: "events.cubesandcardboard.net",
-  prod: "eventsdev.dissonantconcord.com",
+  prod: "events.cubesandcardboard.net",
+  dev: "eventsdev.dissonantconcord.com",
 };
 
 type LogType = {
