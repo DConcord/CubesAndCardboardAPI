@@ -194,6 +194,46 @@ Resources:
         - Key: Owner
           Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
+  RsvpAlertsScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub rsvp_alerts_${Mode}
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ReservedRsvpRefreshScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub reserved_rsvp_refresh_${Mode}
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ReservedRsvpRefreshScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub reserved_rsvp_refresh_scheduler_role_${Mode}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Description: !Sub Role used by reserved_rsvp_refresh_${Mode} schedules
+      Policies:
+        - PolicyName: InvokeManageEventsFunction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action: lambda:InvokeFunction
+                Resource: !GetAtt ManageEventsFunction.Arn
+                Effect: Allow
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
   ManageEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -539,6 +579,7 @@ Resources:
                 - iam:PassRole
               Resource:
                 - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${RsvpAlertsScheduleGroup}/rsvp_alerts_schedule_${Mode}"
+                - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${RsvpAlertsScheduleGroup}/rsvp_alerts_schedule_${Mode}"
                 - !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
   ManageEventsFunctionRoleScheduleEventPolicy:
     Type: "AWS::IAM::Policy"
@@ -643,6 +684,7 @@ Resources:
           Type: ScheduleV2
           Properties:
             Name: !Sub "rsvp_alerts_schedule_${Mode}"
+            GroupName: !Ref RsvpAlertsScheduleGroup
             GroupName: !Ref RsvpAlertsScheduleGroup
             ScheduleExpression: "at(2024-04-02T03:59:00)"
             State: DISABLED
