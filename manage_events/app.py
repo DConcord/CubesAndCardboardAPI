@@ -9,62 +9,136 @@ import uuid
 import botocore
 import time
 import os
+import csv
 from copy import deepcopy
+class env:
+  TABLE_NAME_PROD = os.environ['table_name_prod']
+  TABLE_NAME = os.environ['table_name'] # 'game_events'
+  S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
+  RSVP_SQS_URL = os.environ['rsvp_sqs_url']
+  SNS_TOPIC_ARN = os.environ['sns_topic']
+  BACKEND_BUCKET = os.environ['backend_bucket']
+  MODE = os.environ['mode']
+  BGG_PICTURE_FN = os.environ['bgg_picture_fn']
 
-TABLE_NAME = os.environ['table_name'] # 'game_events'
-S3_BUCKET = os.environ['s3_bucket'] #'cdkstack-bucket83908e77-7tr0zgs93uwh'
-RSVP_SQS_URL = os.environ['rsvp_sqs_url']
-SNS_TOPIC_ARN = os.environ['sns_topic']
-BACKEND_BUCKET = os.environ['backend_bucket']
-MODE = os.environ['mode']
+  ALLOWED_ORIGINS = [
+    'http://localhost:8080',
+    'https://events.dev.dissonantconcord.com',
+    'https://eventsdev.dissonantconcord.com',
+    'https://events.cubesandcardboard.net',
+    'https://www.cubesandcardboard.net',
+    'https://cubesandcardboard.net',
+    'https://sandbox-events.dissonantconcord.com',
+  ]
+  COGNITO_POOL_ID = os.environ['user_pool_id']
+  COGNITO_POOL_ID_PROD = os.environ['user_pool_id_prod']
+  COGNITO_CLOUDWATCH_ROLE = os.environ['cognito_cloudwatch_role']
 
-ALLOWED_ORIGINS = [
-  'http://localhost:8080',
-  'https://events.dev.dissonantconcord.com',
-  'https://eventsdev.dissonantconcord.com',
-  'https://events.cubesandcardboard.net',
-  'https://www.cubesandcardboard.net',
-  'https://cubesandcardboard.net'
-]
-COGNITO_POOL_ID = 'us-east-1_Okkk4SAZX'
-PULL_BGG_PIC = False
+pull_bgg_pic = False
+
+class CsvTextBuilder(object):
+  def __init__(self):
+    self.csv_string = []
+
+  def write(self, row):
+    self.csv_string.append(row)
+  
+  @property
+  def encoded_csv(self):
+    return ''.join(self.csv_string).encode('utf-8')
+  
+  def encoded_csv_generator(self):
+    yield ''.join(self.csv_string).encode('utf-8')
+
 
 
 def lambda_handler(apiEvent, context):
-  global PULL_BGG_PIC
-
-  match apiEvent.get('action'):
-    case 'ProcessAllReservedSchedules':
-      print('Process Refresh schedules for all upcoming Reserved Events')
-      print(json.dumps(apiEvent))
-      upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).isoformat()[:19])
-      print(json.dumps({"upcomingEvents": [{'event_id': event['event_id'], 'format': event['format'], 'date': event['date']}  for event in upcomingEvents]}, default=ddb_default))
-      for event in upcomingEvents:
-        if event['format'] == 'Reserved':
-          process_reserved_event_scheduled_tasks(reserved_event=event, action='create', target_arn=context.invoked_function_arn)
-      return {'statusCode': 200, 'body': 'OK'}
-
-    case 'updatePlayerPools':
-      time.sleep(1)
-      print('apiEvent.action: Update Player Pools')
-      print(json.dumps(apiEvent))
-      updatePlayerPools()
-      print('Publish public events.json')
-      updatePublicEventsJson()
-      return {'statusCode': 200, 'body': 'OK'}
-
-  origin = '*'
-  if apiEvent and 'headers' in apiEvent and apiEvent['headers'] and 'Origin' in apiEvent['headers'] and apiEvent['headers']['Origin']:
-    origin = apiEvent['headers']['Origin']
+  global pull_bgg_pic
   
-    if origin not in ALLOWED_ORIGINS: 
-      print(json.dumps(apiEvent))
-      print(f"WARNING: origin '{origin}' not allowed")
-      return {
-        'statusCode': 401,
-        'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
-        'body': json.dumps({'message': 'CORS Failure'}),
-      }
+  origin = '*'
+  # if apiEvent and 'headers' in apiEvent and apiEvent['headers'] and 'Origin' in apiEvent['headers'] and apiEvent['headers']['Origin']:
+  if apiEvent.get('headers') and  (apiEvent['headers'].get('Origin') or apiEvent['headers'].get('Sec-Fetch-Site')=='same-origin' ):
+    if apiEvent['headers'].get('Origin'):
+      origin = apiEvent['headers']['Origin']
+    
+      if origin not in env.ALLOWED_ORIGINS: 
+        print(json.dumps(apiEvent, default=ddb_default))
+        print(f"WARNING: origin '{origin}' not allowed")
+        return {
+          'statusCode': 401,
+          'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
+          'body': json.dumps({'message': 'CORS Failure'}),
+        }
+  elif apiEvent:    
+    match apiEvent.get('action'):
+      case 'updatePrevSubEvents':
+        print('apiEvent.action: updatePrevSubEvents')
+        print(json.dumps(apiEvent, default=ddb_default))
+        return {
+          'statusCode': 200, 
+          'body': json.dumps(updatePrevSubEvents(), default=ddb_default)
+        }
+      
+      case 'getContext':
+        try:
+          print( json.dumps(vars(context), default=ddb_default))
+          return {'statusCode': 200, 'body': json.dumps(vars(context), default=ddb_default)}
+        except Exception as e:
+          return {'statusCode': 500, 'body': json.dumps(str(e))}
+      
+      case 'ProcessAllReservedSchedules':
+        print('Process Refresh schedules for all upcoming Reserved Events')
+        print(json.dumps(apiEvent, default=ddb_default))
+        upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).isoformat()[:19])
+        print(json.dumps({"upcomingEvents": [{'event_id': event['event_id'], 'format': event['format'], 'date': event['date']}  for event in upcomingEvents]}, default=ddb_default))
+        for event in upcomingEvents:
+          if event['format'] == 'Reserved':
+            process_reserved_event_scheduled_tasks(reserved_event=event, action='create', target_arn=context.invoked_function_arn)
+        return {'statusCode': 200, 'body': 'OK'}
+
+      case 'updatePlayerPools':
+        time.sleep(1)
+        print('apiEvent.action: Update Player Pools')
+        print(json.dumps(apiEvent, default=ddb_default))
+        updatePlayerPools()
+        print('Publish public events.json')
+        updatePublicEventsJson()
+        return {'statusCode': 200, 'body': 'OK'}
+      
+      case 'initBootstrap':
+        print('apiEvent.action: initBootstrap')
+        print(json.dumps(apiEvent, default=ddb_default))
+        init_bootstrap()
+        return {'statusCode': 200, 'body': 'OK'}
+      
+      # default
+      case _:
+        if apiEvent.get('action'):
+          print(f'WARNING: Unexpected action {apiEvent.get('action')}')
+          print(json.dumps(apiEvent, default=ddb_default))
+          return {
+            'statusCode': 401,
+            'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
+            'body': json.dumps({'message': f'Unexpected action: {apiEvent.get('action')}'}),
+          }
+    
+    print('Unexpected Event (1)')
+    print(json.dumps(apiEvent, default=ddb_default))
+    return {
+      'statusCode': 401,
+      'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
+      'body': json.dumps({'message': 'Unexpected Event (1)'})#, 'event': apiEvent}, default=ddb_default),
+    }
+  else:
+    print('Unexpected Event (2)')
+    print(json.dumps(apiEvent, default=ddb_default))
+    return {
+      'statusCode': 401,
+      'headers': {'Access-Control-Allow-Origin': 'https://events.cubesandcardboard.net'},
+      'body': json.dumps({'message': 'Unexpected Event (2)'})#, 'event': apiEvent}, default=ddb_default),
+    }
+
+
   unauthorized = {
     'statusCode': 401,
     'headers': {'Access-Control-Allow-Origin': origin},
@@ -115,9 +189,9 @@ def lambda_handler(apiEvent, context):
           updatePlayerPools()
           print('Event Created; Publish public events.json')
           updatePublicEventsJson()
-          print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
+          print(f'pull_bgg_pic = {pull_bgg_pic}')
           try:
-            if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+            if pull_bgg_pic: waitForBggPic(data['bgg_id'])
           except Exception as e:
               print(e)
           if data['format'] == 'Reserved':
@@ -220,9 +294,9 @@ def lambda_handler(apiEvent, context):
             updatePlayerPools()
             print('Event Modified; Publish public events.json')
             updatePublicEventsJson()
-            print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
+            print(f'pull_bgg_pic = {pull_bgg_pic}')
             try:
-              if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+              if pull_bgg_pic: waitForBggPic(data['bgg_id'])
             except Exception as e:
                 print(e)
             return {
@@ -317,9 +391,9 @@ def lambda_handler(apiEvent, context):
           updatePlayerPools()
           print('Event Modified; Publish public events.json')
           updatePublicEventsJson()
-          print(f'PULL_BGG_PIC = {PULL_BGG_PIC}')
+          print(f'pull_bgg_pic = {pull_bgg_pic}')
           try:
-            if PULL_BGG_PIC: waitForBggPic(data['bgg_id'])
+            if pull_bgg_pic: waitForBggPic(data['bgg_id'])
           except Exception as e:
               print(e)
           return {
@@ -459,7 +533,8 @@ def lambda_handler(apiEvent, context):
           else:
             dateLte = None
           
-          events = getEvents(dateGte = dateGte, dateLte = dateLte)
+          tableType = data.get('tableType', env.MODE) if data else env.MODE
+          events = getEvents(dateGte = dateGte, dateLte = dateLte, tableType = tableType)
 
           # If not an admin, filter out 'private' events of which the member is not in the player pool
           if not authorize(apiEvent, auth_groups, ['admin'], log_if_false=False):
@@ -478,24 +553,127 @@ def lambda_handler(apiEvent, context):
           if authorize(apiEvent, auth_groups, ['admin'], log_if_false=False): 
             print('Get Players (admin)')
             refresh = 'no'
-            if apiEvent['queryStringParameters'] and apiEvent['queryStringParameters']['refresh']:
-              refresh = apiEvent['queryStringParameters']['refresh'].lower()
+            params = apiEvent.get('queryStringParameters', {})
+            if params.get('refresh'):
+              refresh = params.get('refresh').lower()
 
             if refresh.lower() == 'yes':
-              print('Get full players/groups refresh')
-              user_dict = updatePlayersGroupsJson()
+              if params.get('user_pool'):
+                user_pool=params.get('user_pool')
+                print(f'Get {user_pool} players/groups')
+                user_dict = getAllUsersInAllGroups(user_pool=user_pool)
+              else:
+                print('Get full players/groups refresh')
+                user_dict = updatePlayersGroupsJson()
             else:
-              user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+              user_dict = getJsonS3(env.BACKEND_BUCKET, 'players_groups.json')
           
           # Non-admin users just retrieve the public facing (reduced details) players_groups.json
           else:
             print('Get Players (non-admin)')
-            user_dict = getJsonS3(S3_BUCKET, 'players_groups.json')
+            user_dict = getJsonS3(env.S3_BUCKET, 'players_groups.json')
             
           return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': origin},
             'body': json.dumps(user_dict, indent=2, default=ddb_default)
+          }
+        
+    case '/players/import':
+      match method:        
+         
+        # Import Players
+        case 'POST':
+          print('Import Players')
+          if not authorize(apiEvent, auth_groups, ['admin']): 
+            print(f"WARNING: user_id '{auth_sub}' is not an admin. not authorized")
+            return unauthorized
+          
+          data = json.loads(apiEvent['body'])
+          import_players_groups = [info for user_id, info in getAllUsersInAllGroups(user_pool='prod')['Users'].items() if user_id in data]
+          
+          cognito = boto3.client('cognito-idp')
+          r = cognito.get_csv_header(UserPoolId=env.COGNITO_POOL_ID)
+          csv_headers = r['CSVHeader']
+          import_csv = [
+            {
+              **{key: '' for key in csv_headers},
+              **{
+                'cognito:username': f"{player['attrib']['given_name']}@dissonantconcord.com".lower(),
+                'cognito:mfa_enabled': 'FALSE',
+                'email_verified': 'TRUE',
+                'phone_number_verified': 'FALSE',
+                'given_name': player['attrib']['given_name'],
+                'family_name': player['attrib']['family_name'],
+                'email': f"{player['attrib']['given_name']}@dissonantconcord.com".lower(),
+                'custom:prev_sub': player['attrib']['sub']
+              }
+            } for player in import_players_groups
+          ]
+          csvfile = CsvTextBuilder()
+          fieldnames = csv_headers
+          writer = csv.DictWriter(csvfile, fieldnames)
+          writer.writeheader()
+          writer.writerows(import_csv)
+          
+          r = cognito.create_user_import_job(
+            JobName=f'{env.MODE}_import', #datetime.now(ZoneInfo("America/Denver")).isoformat(), #[:19]
+            UserPoolId=env.COGNITO_POOL_ID,
+            CloudWatchLogsRoleArn=env.COGNITO_CLOUDWATCH_ROLE
+          )
+          import_job = r['UserImportJob']
+
+          import urllib.request
+
+          file_data = csvfile.encoded_csv
+          file_name = "players_import.csv"
+
+          # Create the request
+          req = urllib.request.Request(import_job['PreSignedUrl'], data=file_data, method='PUT')
+          req.add_header('Content-Disposition', f'attachment; filename="{file_name}"')
+          req.add_header('x-amz-server-side-encryption', 'aws:kms')
+
+          # Send the request and get the response
+          try:
+              with urllib.request.urlopen(req) as response:
+                  http_response = response.read()
+                  print(f"Upload successful. Status code: {response.getcode()}")
+          except urllib.error.URLError as e:
+              print(f"Upload failed. Error: {e.reason}")
+              if hasattr(e, 'read'):
+                  print(f"Error details: {e.read().decode('utf-8')}")
+
+          r = cognito.start_user_import_job(
+            UserPoolId=env.COGNITO_POOL_ID,
+            JobId=import_job['JobId']
+          )
+
+          while r['UserImportJob']['Status'] in ['Created','Pending','InProgress']:
+            time.sleep(1)
+            r = cognito.describe_user_import_job(
+              UserPoolId=env.COGNITO_POOL_ID,
+              JobId=import_job['JobId']
+            )
+          
+          users_dict = getAllUsersInAllGroups()
+          user_prev_sub_dict = {user['attrib']['custom:prev_sub']: user['attrib']['sub'] for user in users_dict['Users'].values() if 'custom:prev_sub' in user['attrib']}
+
+          for prev_user in import_players_groups:
+            prev_sub = prev_user['attrib']['sub']
+            new_sub = user_prev_sub_dict[prev_sub]
+            
+            for group in prev_user['groups']:
+              response = cognito.admin_add_user_to_group(
+                  UserPoolId=env.COGNITO_POOL_ID,
+                  Username=new_sub,
+                  GroupName=group
+              )
+          users_dict = updatePlayersGroupsJson()
+          
+          return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(users_dict, indent=2, default=ddb_default)
           }
 
     case '/player':
@@ -504,7 +682,10 @@ def lambda_handler(apiEvent, context):
         # Create new Player
         case 'POST':
           print('Create Player')
-          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test            
+          if (
+            not authorize(apiEvent, auth_groups, ['admin']) 
+            or (env.MODE not in ['prod', 'sandbox'] and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c') # only allow colten in dev/test (or any admin in prod/sandbox)
+          ):            
             print(f"WARNING: user_id '{auth_sub}' is not authorized to create players")
             return unauthorized
           
@@ -513,14 +694,14 @@ def lambda_handler(apiEvent, context):
           attributes.append({'Name': 'email_verified', 'Value': 'true'})
           client = boto3.client('cognito-idp')
           response = client.admin_create_user(
-            UserPoolId=COGNITO_POOL_ID,
+            UserPoolId=env.COGNITO_POOL_ID,
             Username=data['email'],
             UserAttributes=attributes,
             MessageAction='SUPPRESS'
           )
           # print(json.dumps(response, default=ddb_default))
 
-          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          user_dict = getJsonS3(env.BACKEND_BUCKET, 'players_groups.json')
           user = response['User']
           user_id = user['Username']
           user_dict['Users'][user_id] = {'groups': [], 'attrib': {}, **user}
@@ -530,7 +711,7 @@ def lambda_handler(apiEvent, context):
             user_dict['Groups'][group].append(user_id)
             user_dict['Users'][user_id]['groups'].append(group)
             response = client.admin_add_user_to_group(
-                UserPoolId=COGNITO_POOL_ID,
+                UserPoolId=env.COGNITO_POOL_ID,
                 Username=user_id,
                 GroupName=group
             )
@@ -553,11 +734,14 @@ def lambda_handler(apiEvent, context):
         # Update Existing Player
         case 'PUT':
           print('Update Player')
-          if not authorize(apiEvent, auth_groups, ['admin']) or ( MODE != 'prod' and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c'): # only allow colten in dev/test
+          if (
+            not authorize(apiEvent, auth_groups, ['admin']) 
+            or (env.MODE not in ['prod', 'sandbox'] and auth_sub != '34f8c488-0061-70bb-a6bd-ca58ce273d9c') # only allow colten in dev/test (or any admin in prod/sandbox)
+          ):   
             print(f"WARNING: user_id '{auth_sub}' is not authorized to update players")
             return unauthorized
           
-          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          user_dict = getJsonS3(env.BACKEND_BUCKET, 'players_groups.json')
           data = json.loads(apiEvent['body'])
           user_id = data['user_id']
           attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id']]
@@ -585,7 +769,7 @@ def lambda_handler(apiEvent, context):
             
             client = boto3.client('cognito-idp')
             attrib_response = client.admin_update_user_attributes(
-              UserPoolId=COGNITO_POOL_ID,
+              UserPoolId=env.COGNITO_POOL_ID,
               Username=user_id,
               UserAttributes=attrib_changes
             )
@@ -598,7 +782,7 @@ def lambda_handler(apiEvent, context):
             for group in user_dict['Users'][user_id]['groups']:
               if group not in data['groups']:
                 client.admin_remove_user_from_group(
-                  UserPoolId=COGNITO_POOL_ID,
+                  UserPoolId=env.COGNITO_POOL_ID,
                   Username=user_id,
                   GroupName=group
                 )
@@ -608,7 +792,7 @@ def lambda_handler(apiEvent, context):
             for group in data['groups']:
               if group not in user_dict['Users'][user_id]['groups']:
                 client.admin_add_user_to_group(
-                  UserPoolId=COGNITO_POOL_ID,
+                  UserPoolId=env.COGNITO_POOL_ID,
                   Username=user_id,
                   GroupName=group
                 )
@@ -618,7 +802,7 @@ def lambda_handler(apiEvent, context):
           # If attributes changed, update the user_dict
           if attrib_changes != []:
             response = client.admin_get_user(
-              UserPoolId=COGNITO_POOL_ID,
+              UserPoolId=env.COGNITO_POOL_ID,
               Username=user_id,
             )
             user = response
@@ -666,7 +850,7 @@ def lambda_handler(apiEvent, context):
           if auth_sub != data['user_id']:
             print(f"WARNING: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'. not authorized")
             return unauthorized
-          user_dict = getJsonS3(BACKEND_BUCKET, 'players_groups.json')
+          user_dict = getJsonS3(env.BACKEND_BUCKET, 'players_groups.json')
           attributes = [{'Name': attribute,'Value': value} for attribute, value in data.items() if attribute not in ['groups', 'user_id', 'accessToken']]
           attributes.append({'Name': 'sub', 'Value': user_id})
           for attrib in user_dict['Users'][user_id]['Attributes']:
@@ -711,7 +895,7 @@ def lambda_handler(apiEvent, context):
           # If attributes changed, update the user_dict
           if attrib_changes != []:
             response = client.admin_get_user(
-              UserPoolId=COGNITO_POOL_ID,
+              UserPoolId=env.COGNITO_POOL_ID,
               Username=user_id,
             )
             user = response
@@ -780,7 +964,7 @@ def lambda_handler(apiEvent, context):
 
           client = boto3.client('logs')
           query = f'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp", "email_subscription"] | sort @timestamp desc'
-          log_group = f'/aws/lambda/manage_events_{MODE}'
+          log_group = f'/aws/lambda/manage_events_{env.MODE}'
           start_query_response = client.start_query(
               logGroupName=log_group,
               startTime=startTime,
@@ -820,7 +1004,7 @@ def lambda_handler(apiEvent, context):
           if not authorize(apiEvent, auth_groups, ['admin']):
             print(f"WARNING: user_id '{auth_sub}' is not authorized")
             return unauthorized
-          email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
+          email_alert_preferences = getJsonS3(env.BACKEND_BUCKET, 'email_alert_preferences.json')
           return {
             'statusCode': 200,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -838,7 +1022,7 @@ def lambda_handler(apiEvent, context):
           if auth_sub != data['user_id']:
             print(f"UNAUTHORIZED: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
             return unauthorized
-          email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
+          email_alert_preferences = getJsonS3(env.BACKEND_BUCKET, 'email_alert_preferences.json')
           user_alert_preferences = {}
           for alert_type, subscriber_list in email_alert_preferences.items():
             user_alert_preferences[alert_type] = user_id in subscriber_list
@@ -863,7 +1047,7 @@ def lambda_handler(apiEvent, context):
           else:
             auth_type = 'admin'
           alert_subscriptions = data['alert_subscriptions']
-          email_alert_preferences = getJsonS3(BACKEND_BUCKET, 'email_alert_preferences.json')
+          email_alert_preferences = getJsonS3(env.BACKEND_BUCKET, 'email_alert_preferences.json')
           email_alert_preferences = {alert_type: set(subscriber_list) for alert_type, subscriber_list in email_alert_preferences.items()}
 
           for alert_type, subscribed in alert_subscriptions.items():
@@ -903,7 +1087,7 @@ def lambda_handler(apiEvent, context):
           s3 = boto3.client('s3')
           s3.put_object(
             Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
-            Bucket=BACKEND_BUCKET,
+            Bucket=env.BACKEND_BUCKET,
             Key='email_alert_preferences.json',
             ContentType='application/json',
             CacheControl='no-cache'
@@ -928,6 +1112,76 @@ def lambda_handler(apiEvent, context):
     }
     
 # def lambda_handler() 
+def updatePlayerPoolsAndPublicEventsJson():
+  print('Update Player Pools')
+  updatePlayerPools()
+  print('Publish public events.json')
+  updatePublicEventsJson()
+
+def init_bootstrap():
+  from concurrent.futures import ThreadPoolExecutor, as_completed
+
+  s3 = boto3.client('s3')
+  print('Initializing email_alert_preferences.json')
+  if key_exists(env.BACKEND_BUCKET, 'email_alert_preferences.json'):
+    email_alert_preferences = getJsonS3(env.BACKEND_BUCKET, 'email_alert_preferences.json')
+    print('Backend email_alert_preferences.json already exists. Skipping')
+    print(json.dumps(email_alert_preferences))
+  else:
+    email_alert_preferences = {
+      'rsvp_all_debug': [],
+      'rsvp_all': [],
+      'rsvp_hosted': []
+    }
+    s3.put_object(
+      Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
+      Bucket=env.BACKEND_BUCKET,
+      Key='email_alert_preferences.json',
+      ContentType='application/json',
+      CacheControl='no-cache'
+    )
+    
+  print('Initializing players_groups.json')
+  try:
+    updatePlayersGroupsJson(players_groups=None)
+  except:
+    user_dict = {'Groups': {}, 'Users': {}}
+    updatePlayersGroupsJson(players_groups=user_dict)
+
+  print('Initializing events.json')
+  events = getEvents() 
+  # print(json.dumps(events, default=ddb_default))
+  if events == []:
+    initEvent = {
+      'game': 'Back To the Future',
+      'bgg_id': 302388,
+      'attending': [],
+      'date': '1955-11-12T10:04:00-06:00',
+      'host': 'marty_mcfly',
+      'player_pool': [],
+      'format': 'Placeholder'
+    }
+    createEvent(initEvent, process_bgg_id_image=False)
+    bgg_update = {'Records': [{'Sns': {'MessageAttributes': {'bgg_id': {'Value': 302388}, 's3_bucket': {'Value': env.S3_BUCKET}}}}]}
+  else:
+    bgg_update = {'Records': [{'Sns': {'MessageAttributes': {'bgg_id': {'Value': event['bgg_id']}, 's3_bucket': {'Value': env.S3_BUCKET}}}} for event in events if 'bgg_id' in event and event['bgg_id']]}
+  
+  with ThreadPoolExecutor(max_workers=5) as executor:
+    futures = {}
+    if len(bgg_update['Records']) > 0:
+      client = boto3.client('lambda')
+      print(f'Pull {len(bgg_update['Records'])} BGG IDs')
+      futures[executor.submit(client.invoke, FunctionName=env.BGG_PICTURE_FN, Payload=json.dumps(bgg_update, default=ddb_default))] = "bgg"
+    futures[executor.submit(updatePlayerPoolsAndPublicEventsJson)] = "updatePlayerPoolsAndPublicEventsJson"
+    for future in as_completed(futures):
+      type = futures[future]
+      if type == "bgg":
+        print(json.dumps({'BGG pictures result': future.result()}, default=ddb_default))
+      elif type == "updatePlayerPoolsAndPublicEventsJson":
+        print('Update Player Pools and Public Events JSON complete')
+
+  print('Init Bootstrap Complete')  
+
 
 def compareAttributes(old_attributes, new_attributes):
   # compare old_attributes:dict to new_attributes:dict
@@ -1013,7 +1267,7 @@ def send_rsvp_sqs(rsvp_dict):
   rsvp_dict['timestamp'] = datetime.now(ZoneInfo('UTC')).isoformat()
   sqs = boto3.client('sqs')
   sqs.send_message(
-    QueueUrl=RSVP_SQS_URL, 
+    QueueUrl=env.RSVP_SQS_URL, 
     MessageBody=json.dumps(rsvp_dict, default=ddb_default),
     MessageGroupId='rsvp',
     # MessageAttributes={key: {'StringValue': value, 'DataType': 'String'} for key, value in rsvp_dict.items()}
@@ -1021,7 +1275,7 @@ def send_rsvp_sqs(rsvp_dict):
 
 def process_rsvp_alert_task():
   client = boto3.client('scheduler', region_name='us-east-1')
-  response = client.get_schedule(Name=f'rsvp_alerts_schedule_{MODE}', GroupName=f'rsvp_alerts_{MODE}')
+  response = client.get_schedule(Name=f'rsvp_alerts_schedule_{env.MODE}', GroupName=f'rsvp_alerts_{env.MODE}')
   current_schedule = response['ScheduleExpression'][3:-1]
   if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+'Z') > datetime.now(ZoneInfo('UTC')):
     print(f'Current rsvp process already scheduled ({current_schedule}) in the future')
@@ -1029,13 +1283,13 @@ def process_rsvp_alert_task():
   
   # Schedule RSVP alert batch processing for 60 (or 30) seconds in the future
   update_response = client.update_schedule(
-    Name=f'rsvp_alerts_schedule_{MODE}',
-    GroupName=f'rsvp_alerts_{MODE}',
-    ScheduleExpression=f'at({(datetime.now(ZoneInfo('UTC')) + timedelta(seconds=60 if MODE == 'prod' else 30)).isoformat()[:19]})',
+    Name=f'rsvp_alerts_schedule_{env.MODE}',
+    GroupName=f'rsvp_alerts_{env.MODE}',
+    ScheduleExpression=f'at({(datetime.now(ZoneInfo('UTC')) + timedelta(seconds=60 if env.MODE == 'prod' else 30)).isoformat()[:19]})',
     Target=response['Target'],
     FlexibleTimeWindow={'Mode': 'OFF'}
   )
-  print(f'Scheduled RSVP alert batch processing for {60 if MODE == 'prod' else 30} seconds in the future')
+  print(f'Scheduled RSVP alert batch processing for {60 if env.MODE == 'prod' else 30} seconds in the future')
   return
   # print(json.dumps(update_response, default=ddb_default))
 
@@ -1074,7 +1328,7 @@ def reserved_event_scheduled_tasks_crud(action, params):
 
 # is_after_sunday_midnight_of(datetime.fromisoformat(event['date']).replace(tzinfo=ZoneInfo('America/Denver')))
 def process_reserved_event_scheduled_tasks(reserved_event, action, target_arn):
-  group_name = f'reserved_rsvp_refresh_{MODE}'
+  group_name = f'reserved_rsvp_refresh_{env.MODE}'
   acount_id = target_arn.split(':')[4]
   event_date = datetime.fromisoformat(reserved_event['date']).replace(tzinfo=ZoneInfo('America/Denver'))
   base_params = {
@@ -1082,7 +1336,7 @@ def process_reserved_event_scheduled_tasks(reserved_event, action, target_arn):
     'ScheduleExpressionTimezone':'America/Denver',
     'Target':{
       'Arn': target_arn,
-      'RoleArn': f'arn:aws:iam::{acount_id}:role/reserved_rsvp_refresh_scheduler_role_{MODE}',
+      'RoleArn': f'arn:aws:iam::{acount_id}:role/reserved_rsvp_refresh_scheduler_role_{env.MODE}',
       'Input': json.dumps({'action': 'updatePlayerPools'}),
       'RetryPolicy': {
           'MaximumEventAgeInSeconds': 86400,
@@ -1141,22 +1395,22 @@ def process_reserved_event_scheduled_tasks(reserved_event, action, target_arn):
 # Check whether bgg image has already been pulled and send 
 # an SNS to trigger pulling/resizing/saving it if not
 def process_bgg_id(bgg_id):
-  global PULL_BGG_PIC
+  global pull_bgg_pic
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
-  if not key_exists(S3_BUCKET, key):
-    PULL_BGG_PIC = True
+  if not key_exists(env.S3_BUCKET, key):
+    pull_bgg_pic = True
 
     # send message to SNS
-    print(f"Sending message to SNS: '{bgg_id}#{SNS_TOPIC_ARN}'")
+    print(f"Sending message to SNS: '{bgg_id}#{env.SNS_TOPIC_ARN}'")
     sns = boto3.client('sns')
     sns.publish(
-      TopicArn=SNS_TOPIC_ARN,
-      Message=f'{bgg_id}#{S3_BUCKET}',
+      TopicArn=env.SNS_TOPIC_ARN,
+      Message=f'{bgg_id}#{env.S3_BUCKET}',
       MessageAttributes={
         's3_bucket': {
           'DataType': 'String',
-          'StringValue': S3_BUCKET
+          'StringValue': env.S3_BUCKET
         },
         'bgg_id': {
           'DataType': 'String',
@@ -1170,7 +1424,7 @@ def process_bgg_id(bgg_id):
 def waitForBggPic(bgg_id):
    # wait for 5 seconds at most
   for i in range(15):
-    if key_exists(S3_BUCKET, f'{bgg_id}.png'):
+    if key_exists(env.S3_BUCKET, f'{bgg_id}.png'):
       return
     else:
       print(f"Waiting for {bgg_id}.png to be pulled...")
@@ -1217,7 +1471,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
 
   ddb = boto3.client('dynamodb', region_name='us-east-1')
   response = ddb.put_item(
-    TableName=TABLE_NAME,
+    TableName=env.TABLE_NAME,
     Item={**new_event},
     # Fail if item.event_id already exists
     ConditionExpression='attribute_not_exists(event_id)',
@@ -1240,8 +1494,8 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
     'format': {'S': eventDict['format']},
     'open_rsvp_eligibility': {'BOOL': eventDict['open_rsvp_eligibility']} if 'open_rsvp_eligibility' in eventDict else {'BOOL': False},
     'game': {'S': eventDict['game']},
-    'attending': {'SS': eventDict['attending']},
-    'player_pool': {'SS': eventDict['player_pool']},
+    'attending': {'SS': list(eventDict['attending'])},
+    'player_pool': {'SS': list(eventDict['player_pool'])},
   }
   if 'finalScore' in eventDict and  eventDict['finalScore'] != '': modified_event['finalScore'] = {'S': json.dumps(eventDict['finalScore'])}
   if 'status' in eventDict: modified_event['status'] = {'S': eventDict['status']}
@@ -1250,7 +1504,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   if 'tbd_pic' in eventDict: modified_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
   # if 'migrated' in eventDict: modified_event['migrated'] = {'BOOL': eventDict['migrated']}
   if 'not_attending' in eventDict: 
-    modified_event['not_attending'] = {'SS': eventDict['not_attending']}
+    modified_event['not_attending'] = {'SS': list(eventDict['not_attending'])}
   else :
     modified_event['not_attending'] = {'SS': ['placeholder']}
 
@@ -1269,9 +1523,9 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   # date = parser.parse(text).date().isoformat()
   ddb = boto3.client('dynamodb', region_name='us-east-1')
   response = ddb.put_item(
-    TableName=TABLE_NAME,
+    TableName=env.TABLE_NAME,
     Item={**modified_event},
-    # Fail if item.event_id already exists
+    # Fail if item.event_id doesn't already exist
     ConditionExpression='attribute_exists(event_id)',
   )
   print('Event Updated')
@@ -1284,7 +1538,7 @@ def updateEvent(event_id, event_updates):
   event_updates = deepcopy(event_updates)
   if 'finalScore' in event_updates and event_updates['finalScore'] != '': event_updates['finalScore'] = json.dumps(event_updates['finalScore'])
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
-  table = ddb.Table(TABLE_NAME)
+  table = ddb.Table(env.TABLE_NAME)
   try:
     response = table.update_item(
       Key={ 'event_id': event_id },
@@ -1308,7 +1562,7 @@ def updateEvent(event_id, event_updates):
 
 def deleteEvent(event_id):   
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
-  table = ddb.Table(TABLE_NAME)
+  table = ddb.Table(env.TABLE_NAME)
   response = table.delete_item(
     Key={ 'event_id': event_id },
     ConditionExpression='attribute_exists (event_id)',
@@ -1318,7 +1572,6 @@ def deleteEvent(event_id):
 
 def getEvent(event_id, attributes=[], as_json=False):
   param = {
-    "TableName": TABLE_NAME,
     "KeyConditionExpression": Key('event_id').eq(event_id)
   }
   if attributes:
@@ -1326,7 +1579,7 @@ def getEvent(event_id, attributes=[], as_json=False):
     param['ExpressionAttributeNames'] = {f'#{k}': k for k in attributes}
 
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
-  table = ddb.Table(TABLE_NAME)
+  table = ddb.Table(env.TABLE_NAME)
   response = table.query(**param)
   if len(response['Items']) > 1:
     raise Exception('More than one event found with that ID')
@@ -1348,7 +1601,13 @@ def getEvent(event_id, attributes=[], as_json=False):
     return response['Items'][0]
 
 
-def getEvents(dateGte = None, dateLte = None, event_type='GameKnight', as_json=False):   
+def getEvents(dateGte = None, dateLte = None, event_type='GameKnight', as_json=False, tableType=env.MODE):  
+
+  match tableType:
+    case env.MODE: table_name=env.TABLE_NAME
+    case 'prod': table_name=env.TABLE_NAME_PROD
+    case _: raise Exception("Invalid table name")
+      
   KeyConditionExpression=(Key('event_type').eq(event_type))
   if dateGte:
     if not isinstance(dateGte, str):
@@ -1361,9 +1620,8 @@ def getEvents(dateGte = None, dateLte = None, event_type='GameKnight', as_json=F
 
 
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
-  table = ddb.Table(TABLE_NAME)
+  table = ddb.Table(table_name)
   response = table.query(
-    TableName=TABLE_NAME,
     IndexName='EventTypeByDate',
     Select='ALL_ATTRIBUTES',
     KeyConditionExpression=KeyConditionExpression,
@@ -1391,7 +1649,7 @@ def updatePublicEventsJson():
   s3 = boto3.client('s3')
   s3.put_object(
     Body=json.dumps(future_events, default=ddb_default),
-    Bucket=S3_BUCKET,
+    Bucket=env.S3_BUCKET,
     Key='events.json',
     ContentType='application/json',
     CacheControl='no-cache',
@@ -1406,7 +1664,7 @@ def updatePlayersGroupsJson(players_groups=None):
   s3 = boto3.client('s3')
   s3.put_object(
     Body=json.dumps(players_groups, indent=2, default=ddb_default),
-    Bucket=BACKEND_BUCKET,
+    Bucket=env.BACKEND_BUCKET,
     Key='players_groups.json',
     ContentType='application/json',
     CacheControl='no-cache'
@@ -1415,7 +1673,7 @@ def updatePlayersGroupsJson(players_groups=None):
 
   s3.put_object(
     Body=json.dumps(reduceUserAttrib(players_groups), indent=2, default=ddb_default),
-    Bucket=S3_BUCKET,
+    Bucket=env.S3_BUCKET,
     Key='players_groups.json',
     ContentType='application/json',
     CacheControl='no-cache'
@@ -1432,7 +1690,7 @@ def updateRSVP(event_id, user_id, rsvp):
   elif rsvp == 'not_attending':
     delete = 'attending'
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
-  table = ddb.Table(TABLE_NAME)
+  table = ddb.Table(env.TABLE_NAME)
   response = table.update_item(
     Key={ 'event_id': event_id },
     UpdateExpression=f'ADD {rsvp} :user_id DELETE {delete} :user_id',
@@ -1448,7 +1706,7 @@ def updateRSVP(event_id, user_id, rsvp):
 def deleteRSVP(event_id, user_id, rsvp):
   now_iso_mt = datetime.now(ZoneInfo("America/Denver")).replace(microsecond=0).isoformat()
   ddb = boto3.resource('dynamodb', region_name='us-east-1')
-  table = ddb.Table(TABLE_NAME)
+  table = ddb.Table(env.TABLE_NAME)
   response = table.update_item(
     Key={ 'event_id': event_id },
     UpdateExpression=f'DELETE {rsvp} :user_id',
@@ -1488,9 +1746,65 @@ def getJsonS3(bucket_name, file_path):
   file_content = content_object.get()['Body'].read().decode('utf-8')
   return json.loads(file_content)
 
+def updatePrevSubEvents(events=[], user_cache=True):
+  if events == []:
+    events = getEvents() # All
+  updated_events = set()
+
+  if user_cache:
+    user_dict = getJsonS3(env.BACKEND_BUCKET, 'players_groups.json')
+  else:
+    user_dict = getAllUsersInAllGroups()
+  user_prev_sub_dict = {info['attrib']['custom:prev_sub']: player_id for player_id, info in user_dict['Users'].items() if info['attrib'].get('custom:prev_sub', '') != ''}
+  if user_prev_sub_dict == {}:
+    return updated_events
+  
+  for event in events:
+    event_hash = f'{event['game']}#{event['date']}#{event['event_id']}'
+    for k,v in event.items():
+      if k in ['event_id', 'event_type', 'date', 'format', 'open_rsvp_eligibility', 'game', 'bgg_id', 'total_spots', 'tbd_pic', 'migrated', 'status']: 
+        continue
+      if k == 'finalScore':
+        for score in v:
+          if score['player'] in user_prev_sub_dict and score['player'] not in user_dict:
+            updated_events.add(event_hash)
+            score['player'] = user_prev_sub_dict[score['player']]
+      elif isinstance(v, (list, set)):
+        for player_id in v.copy():
+          if player_id in user_prev_sub_dict and player_id not in user_dict:
+            updated_events.add(event_hash)
+            if isinstance(v, list):
+              event[k].append(user_prev_sub_dict[player_id])
+            if isinstance(v, set):
+              event[k].add(user_prev_sub_dict[player_id])
+            event[k].remove(player_id)
+      elif isinstance(v, str):
+        if v in user_prev_sub_dict and v not in user_dict:
+          updated_events.add(event_hash)
+          event[k] = user_prev_sub_dict[v]
+      else:
+        raise Exception(f"Unhandled type {type(v)} for {k}: {v}")
+    if event_hash in updated_events: 
+      print(f"Modify event {event_hash}")
+      modifyEvent(event,process_bgg_id_image=False)
+  return updated_events
+
+def admin_set_user_password(user_id, user_pool=env.MODE):
+  match user_pool:
+    case env.MODE: user_pool_id = env.COGNITO_POOL_ID
+    case 'prod': user_pool_id = env.COGNITO_POOL_ID_PROD
+    case _: raise Exception(f"Invalid user pool: {user_pool}")
+  client = boto3.client('cognito-idp', region_name='us-east-1')
+  response = client.admin_set_user_password(
+      UserPoolId=user_pool_id,
+      Username=user_id,
+      Password='string',
+      Permanent=True
+  )
+
 def updatePlayerPools():
   from collections import defaultdict 
-  players_groups = getJsonS3(S3_BUCKET, 'players_groups.json')
+  players_groups = getJsonS3(env.S3_BUCKET, 'players_groups.json')
   players = players_groups['Groups']['player']
   organizers = players_groups['Groups']['organizer']
   players_spent = set()
@@ -1597,41 +1911,53 @@ def updatePlayerPools():
 def list_groups_for_user(user_id): 
   client = boto3.client('cognito-idp', region_name='us-east-1')
   response = client.admin_list_groups_for_user(
-    UserPoolId=COGNITO_POOL_ID,
+    UserPoolId=env.COGNITO_POOL_ID,
     Username=user_id
   )
   return response['Groups']
 
-def listAllUsers():
+def listAllUsers(user_pool=env.MODE):
+  match user_pool:
+    case env.MODE: user_pool_id = env.COGNITO_POOL_ID
+    case 'prod': user_pool_id = env.COGNITO_POOL_ID_PROD
+    case _: raise Exception(f"Invalid user pool: {user_pool}")
   client = boto3.client('cognito-idp', region_name='us-east-1')
   response = client.list_users(
-    UserPoolId=COGNITO_POOL_ID
+    UserPoolId=user_pool_id
   )
   return response
 ## getAllUsers()
 
-def listAllGroups():
+def listAllGroups(user_pool=env.MODE):
+  match user_pool:
+    case env.MODE: user_pool_id = env.COGNITO_POOL_ID
+    case 'prod': user_pool_id = env.COGNITO_POOL_ID_PROD
+    case _: raise Exception(f"Invalid user pool: {user_pool}")
   client = boto3.client('cognito-idp', region_name='us-east-1')
   response = client.list_groups(
-    UserPoolId=COGNITO_POOL_ID
+    UserPoolId=user_pool_id
   )
   return response
 
-def listUsersInGroup(group_name):
+def listUsersInGroup(group_name, user_pool=env.MODE):
+  match user_pool:
+    case env.MODE: user_pool_id = env.COGNITO_POOL_ID
+    case 'prod': user_pool_id = env.COGNITO_POOL_ID_PROD
+    case _: raise Exception(f"Invalid user pool: {user_pool}")
   client = boto3.client('cognito-idp', region_name='us-east-1')
   response = client.list_users_in_group(
-    UserPoolId=COGNITO_POOL_ID,
+    UserPoolId=user_pool_id,
     GroupName=group_name
   )
   return response['Users']
 
-def getAllUsersInAllGroups():
-  users = listAllUsers()
+def getAllUsersInAllGroups(user_pool=env.MODE):
+  users = listAllUsers(user_pool=user_pool)
   user_dict = {'Users': {user['Username']: {'groups': set([]), 'attrib': {}, **user} for user in users['Users']}, 'Groups': {}}
-  groups = listAllGroups()
+  groups = listAllGroups(user_pool=user_pool)
   for group in groups['Groups']:
     user_dict['Groups'][group['GroupName']] = []
-    grp_users = listUsersInGroup(group['GroupName'])
+    grp_users = listUsersInGroup(group['GroupName'],user_pool=user_pool)
     for user in grp_users:
       user_dict['Users'][user['Username']]['groups'].add(group['GroupName'])
       user_dict['Groups'][group['GroupName']].append(user['Username'])
@@ -1650,6 +1976,8 @@ def reduceUserAttrib(user_dict, admin=False):
         'attrib': {
           'given_name': user['attrib']['given_name']
       } }
+      if user['attrib'].get('custom:prev_sub'): 
+        users['Users'][user_id]['attrib']['custom:prev_sub']= user['attrib']['custom:prev_sub']
       if admin:
         users['Users'][user_id]['attrib'] = user['attrib']
     except:
@@ -1725,7 +2053,7 @@ if __name__ == '__main__':
   # s3 = boto3.client('s3')
   # s3.put_object(
   #   Body=json.dumps(email_alert_preferences, indent=2, default=ddb_default),
-  #   Bucket=BACKEND_BUCKET,
+  #   Bucket=env.BACKEND_BUCKET,
   #   Key='email_alert_preferences.json',
   #   ContentType='application/json',
   #   CacheControl='no-cache'
