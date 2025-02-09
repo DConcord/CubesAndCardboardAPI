@@ -8,8 +8,10 @@ prod:
       region: us-east-1
       stack_name: GameKnightsEventsAPI
       capabilities: CAPABILITY_NAMED_IAM
+      capabilities: CAPABILITY_NAMED_IAM
       s3_bucket: cp-sam-deploy-east1
       parameter_overrides: "Mode=prod"
+      tags: Owner=EventsAPI
       tags: Owner=EventsAPI
 dev:
   build:
@@ -20,7 +22,20 @@ dev:
       region: us-east-1
       stack_name: DEVGameKnightsEventsAPI
       capabilities: CAPABILITY_NAMED_IAM
+      capabilities: CAPABILITY_NAMED_IAM
       s3_bucket: cp-sam-deploy-east1
       parameter_overrides: "Mode=dev"
       tags: Owner=DevEventsAPI
       # tags: foo=bar hello=world
+sandbox:
+  build:
+    parameters:
+      template: ./template.yaml
+  deploy:
+    parameters:
+      region: us-east-1
+      stack_name: SandboxGameKnightsEventsAPI
+      capabilities: CAPABILITY_NAMED_IAM
+      s3_bucket: cp-sam-deploy-east1
+      parameter_overrides: "Mode=sandbox"
+      tags: Owner=SandboxEventsAPI

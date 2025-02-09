@@ -41,6 +41,14 @@ sam delete --stack-name GameKnightsEventsAPI --region us-east-1
 
 <!-- sam build && sam deploy -->
 
+## Sandbox
+
+```
+sam build --config-env sandbox && sam deploy --config-env sandbox && date
+
+aws s3 cp ./rsvp_alerts_ts/template.html s3://sandbox-cubes-and-cardboard-backend
+```
+
 ## Dev
 
 ```
@@ -101,3 +109,21 @@ cd ..
 sam build --config-env dev
 node .aws-sam/build/RsvpAlertsFunction/app.js
 ```
+
+## Initial deployment: Bootstrap DB and S3 files:
+
+NOTE: replace "sandbox" with appropriate environment
+
+aws lambda invoke \
+ --region us-east-1 \
+ --function-name manage_events_sandbox \
+ --cli-binary-format raw-in-base64-out \
+ --payload '{ "action": "initBootstrap" }' -
+
+aws s3 cp ./rsvp_alerts_ts/template.html s3://sandbox-cubes-and-cardboard-backend
+
+aws lambda invoke \
+ --region us-east-1 \
+ --function-name manage_events_sandbox \
+ --cli-binary-format raw-in-base64-out \
+ --payload '{ "action": "updatePrevSubEvents" }' -

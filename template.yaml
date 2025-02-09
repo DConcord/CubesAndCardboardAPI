@@ -10,34 +10,45 @@ Parameters:
     AllowedValues:
       - prod
       - dev
+      - sandbox
 
   Stage:
     Type: String
     Default: Staging
     Description: API Stage
 
-  CognitoUserPoolArn:
-    Type: String
-    Default: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
-    Description: Cognito User Pool Arn
+  # CognitoUserPoolArn:
+  #   Type: String
+  #   Default: arn:aws:cognito-idp:us-east-1:569879156317:userpool/us-east-1_Okkk4SAZX
+  #   Description: Cognito User Pool Arn
 
 Conditions:
-  isDev: !Equals [!Ref Mode, dev]
+  # isDev: !Equals [!Ref Mode, dev]
+  isNotProd: !Not [!Equals [!Ref Mode, prod]]
 
 Mappings:
   EnvMap:
     prod:
-      CloudFrontS3Bucket: cdkstack-bucket83908e77-7tr0zgs93uwh
+      # CloudFrontS3Bucket: cdkstack-bucket83908e77-7tr0zgs93uwh
       EventsTableName: game_events
       ApiGatewayName: Game Knights Events API
       OwnerTag: EventsAPI
       StackName: GameKnightsEventsAPI
+      UserPoolEnv: prod
     dev:
-      CloudFrontS3Bucket: cdkstack-bucketdevff8a9acd-pine3ubqpres
+      # CloudFrontS3Bucket: cdkstack-bucketdevff8a9acd-pine3ubqpres
       EventsTableName: game_events_dev
       ApiGatewayName: Game Knights Events API DEV
       OwnerTag: DevEventsAPI
       StackName: DEVGameKnightsEventsAPI
+      UserPoolEnv: prod
+    sandbox:
+      # CloudFrontS3Bucket:
+      EventsTableName: game_events_sandbox
+      ApiGatewayName: Game Knights Events API Sandbox
+      OwnerTag: SandboxEventsAPI
+      StackName: SandboxGameKnightsEventsAPI
+      UserPoolEnv: sandbox
 
 Resources:
   EventsApiGateway:
@@ -54,7 +65,12 @@ Resources:
         DefaultAuthorizer: CognitoPasswordless
         Authorizers:
           CognitoPasswordless:
-            UserPoolArn: !Ref CognitoUserPoolArn
+            # UserPoolArn: !Ref CognitoUserPoolArn
+            # UserPoolArn: !Sub "{{resolve:ssm:/cubesandcardboard/combined/userpool/arn}}"
+            # UserPoolArn: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/userpool/arn}}"
+            UserPoolArn: !Sub
+              - "{{resolve:ssm:/cubesandcardboard/${env}/userpool/arn}}"
+              - env: !FindInMap [EnvMap, !Ref Mode, UserPoolEnv]
       Cors: "'*'"
       EndpointConfiguration:
         Type: EDGE
@@ -66,6 +82,38 @@ Resources:
           Parameters:
             Location: "swagger.yaml"
             # Location: s3://cp-sam-deploy-east1/swagger.yaml
+  # EventsApiGatewaySSM:
+  #   Type: AWS::SSM::Parameter
+  #   Properties:
+  #     Name: !Sub "/cubesandcardboard/${Mode}/events-api"
+  #     Type: String
+  #     Value: !Sub "https://${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+  #     Description: !Sub "API Gateway URL for ${Mode}"
+  EventsApiGatewayFqdnSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/cubesandcardboard/${Mode}/events-api/fqdn"
+      Type: String
+      Value: !Sub "${EventsApiGateway}.execute-api.${AWS::Region}.amazonaws.com"
+      Description: !Sub "API Gateway FQDN for ${Mode}"
+  EventsApiGatewayStageSSM:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/cubesandcardboard/${Mode}/events-api/stage"
+      Type: String
+      Value: !Ref Stage
+      Description: !Sub "API Gateway URL for ${Mode}"
+
+  # EventsApiGatewayCloudWatchRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     RoleName: !Sub "game-knights-events-api-gateway-cloudwatch-role-${Mode}"
+  #     AssumeRolePolicyDocument:
+  #       Version: "2012-10-17"
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service: apigateway.amazonaws.com
 
   EventsTable:
     Type: AWS::DynamoDB::Table
@@ -102,6 +150,46 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "${Mode}-cubes-and-cardboard-backend"
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  RsvpAlertsScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub rsvp_alerts_${Mode}
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ReservedRsvpRefreshScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub reserved_rsvp_refresh_${Mode}
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ReservedRsvpRefreshScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub reserved_rsvp_refresh_scheduler_role_${Mode}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Description: !Sub Role used by reserved_rsvp_refresh_${Mode} schedules
+      Policies:
+        - PolicyName: InvokeManageEventsFunction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action: lambda:InvokeFunction
+                Resource: !GetAtt ManageEventsFunction.Arn
+                Effect: Allow
       Tags:
         - Key: Owner
           Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
@@ -232,6 +320,24 @@ Resources:
           Properties:
             RestApiId: !Ref EventsApiGateway
             Path: /players
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
+
+        # /players/import
+        ImportPlayers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /players/import
+            Method: POST
+            Auth:
+              Authorizer: CognitoPasswordless
+        ImportPlayersOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /players/import
             Method: OPTIONS
             Auth:
               Authorizer: NONE
@@ -374,28 +480,40 @@ Resources:
       Environment:
         Variables:
           mode: !Ref Mode
-          table_name_prod: !If [isDev, !ImportValue EventsTable-prod-GameKnightsEventsAPI, ""]
+          table_name_prod: !If [isNotProd, !ImportValue EventsTable-prod-GameKnightsEventsAPI, ""]
           table_name: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
-          s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          # s3_bucket: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          s3_bucket: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
           rsvp_sqs_url: !Ref RsvpAlertSqsQueue
           sns_topic: !Ref BggPictureSnsTopic
           backend_bucket: !Ref BackendBucket
+          user_pool_id: !Sub
+            - "{{resolve:ssm:/cubesandcardboard/${env}/userpool/id}}"
+            - env: !FindInMap [EnvMap, !Ref Mode, UserPoolEnv]
+          user_pool_id_prod: "{{resolve:ssm:/cubesandcardboard/prod/userpool/id}}"
+          bgg_picture_fn: !Ref RetrieveBGGImageFunction
+          cognito_cloudwatch_role: !GetAtt CognitoCloudWatchRole.Arn
+          # reserved_rsvp_refresh_schedule_group: !Ref ReservedRsvpRefreshScheduleGroup
+          # reserved_rsvp_refresh_schedule_role: !GetAtt ReservedRsvpRefreshScheduleRole.Arn
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref EventsTable
         - !If
-          - isDev
+          - isNotProd
           - DynamoDBReadPolicy:
               TableName: !ImportValue EventsTable-prod-GameKnightsEventsAPI
           - !Ref "AWS::NoValue"
         - SQSSendMessagePolicy:
             QueueName: !GetAtt RsvpAlertSqsQueue.QueueName
         - S3CrudPolicy:
-            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            # BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            BucketName: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
         - S3CrudPolicy:
             BucketName: !Ref BackendBucket
         - SNSPublishMessagePolicy:
             TopicName: !GetAtt BggPictureSnsTopic.TopicName
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RetrieveBGGImageFunction
           # Allow cognito pool ListUsers
         - Statement:
             - Effect: Allow
@@ -409,7 +527,41 @@ Resources:
                 - cognito-idp:AdminRemoveUserFromGroup
                 - cognito-idp:AdminUpdateUserAttributes
                 - cognito-idp:AdminDeleteUserAttributes
-              Resource: !Ref CognitoUserPoolArn
+                # Resource: !Ref CognitoUserPoolArn
+                # Resource: !Sub "{{resolve:ssm:/cubesandcardboard/combined/userpool/arn}}"
+                # Resource: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/userpool/arn}}"
+              Resource: !Sub
+                - "{{resolve:ssm:/cubesandcardboard/${env}/userpool/arn}}"
+                - env: !FindInMap [EnvMap, !Ref Mode, UserPoolEnv]
+        - !If
+          - isNotProd
+          - Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:GetCSVHeader
+                  - cognito-idp:CreateUserImportJob
+                  - cognito-idp:DescribeUserImportJob
+                  - cognito-idp:ListUserImportJobs
+                  - cognito-idp:StartUserImportJob
+                  - cognito-idp:StopUserImportJob
+                  - cognito-idp:AdminSetUserPassword
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt CognitoCloudWatchRole.Arn
+                  - !Sub
+                    - "{{resolve:ssm:/cubesandcardboard/${env}/userpool/arn}}"
+                    - env: !FindInMap [EnvMap, !Ref Mode, UserPoolEnv]
+          - !Ref "AWS::NoValue"
+        - !If
+          - isNotProd
+          - Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:ListUsers
+                  - cognito-idp:ListUsersInGroup
+                  - cognito-idp:ListGroups
+                Resource: "{{resolve:ssm:/cubesandcardboard/prod/userpool/arn}}"
+          - !Ref "AWS::NoValue"
         - Statement:
             - Effect: Allow
               Action:
@@ -426,6 +578,7 @@ Resources:
                 - scheduler:UpdateSchedule
                 - iam:PassRole
               Resource:
+                - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${RsvpAlertsScheduleGroup}/rsvp_alerts_schedule_${Mode}"
                 - !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${RsvpAlertsScheduleGroup}/rsvp_alerts_schedule_${Mode}"
                 - !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
   ManageEventsFunctionRoleScheduleEventPolicy:
@@ -447,6 +600,34 @@ Resources:
               - !GetAtt ReservedRsvpRefreshScheduleRole.Arn
       Roles:
         - !Ref ManageEventsFunctionRole
+
+  CognitoCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "CognitoCloudWatchRole-${Mode}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cognito-idp.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CognitoCloudWatchPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/cognito/*"
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
   BggSearchFunction:
     Type: AWS::Serverless::Function
@@ -492,7 +673,8 @@ Resources:
         Variables:
           MODE: !Ref Mode
           RSVP_SQS_URL: !Ref RsvpAlertSqsQueue
-          S3_BUCKET: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          # S3_BUCKET: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+          S3_BUCKET: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
           TABLE_NAME: !FindInMap [EnvMap, !Ref Mode, EventsTableName]
           BACKEND_BUCKET: !Ref BackendBucket
           NODE_OPTIONS: --enable-source-maps
@@ -503,6 +685,7 @@ Resources:
           Properties:
             Name: !Sub "rsvp_alerts_schedule_${Mode}"
             GroupName: !Ref RsvpAlertsScheduleGroup
+            GroupName: !Ref RsvpAlertsScheduleGroup
             ScheduleExpression: "at(2024-04-02T03:59:00)"
             State: DISABLED
       Policies:
@@ -511,7 +694,8 @@ Resources:
         - SQSPollerPolicy:
             QueueName: !GetAtt RsvpAlertSqsQueue.QueueName
         - S3ReadPolicy:
-            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            # BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            BucketName: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
         - S3ReadPolicy:
             BucketName: !Ref BackendBucket
         - DynamoDBReadPolicy:
@@ -547,9 +731,11 @@ Resources:
             Topic: !Ref BggPictureSnsTopic
       Policies:
         - S3ReadPolicy:
-            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            # BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            BucketName: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
         - S3WritePolicy:
-            BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            # BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
+            BucketName: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
 
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
@@ -600,3 +786,5 @@ Outputs:
     Value: !GetAtt RsvpAlertsFunctionScheduleEventRole.Arn
   ReservedRsvpRefreshScheduleRole:
     Value: !GetAtt ReservedRsvpRefreshScheduleRole.Arn
+  ManageEventsFunctionName:
+    Value: !Ref ManageEventsFunction

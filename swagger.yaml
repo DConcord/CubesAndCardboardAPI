@@ -34,9 +34,35 @@ paths:
       tags:
         - events
       summary: list events
+      x-amazon-apigateway-request-validator: params-headers
       description: |
         List game knight events. Lists only future events by default. Optionally, filter by date or hosts, or games
       operationId: getEvents
+      parameters:
+        - name: dateGte
+          in: query
+          description: Events whose date is greater than or equal to this date
+          required: false
+          style: form
+          schema:
+            type: string
+            format: date
+        - name: dateLte
+          in: query
+          description: Events whose date is less than or equal to this date
+          required: false
+          style: form
+          schema:
+            type: string
+            format: date
+        - name: tableType
+          in: query
+          description: Specify the Table to query (applicalbe only for migrating events from prod into dev)
+          required: false
+          style: form
+          schema:
+            type: string
+            enum: [prod]
       # parameters:
       #   - name: includePast
       #     in: query
@@ -570,6 +596,76 @@ paths:
           application/json: '{"statusCode": 200}'
         passthroughBehavior: when_no_match
         type: mock
+  /players/import:
+    post:
+      tags:
+        - players
+      summary: Import players bulk
+      description: |
+        Import a bulk of players
+      operationId: importPlayers
+      x-amazon-apigateway-request-validator: body-headers
+      # consumes:
+      #   - application/json
+      # parameters:
+      #   - in: body
+      #     name: playersList
+      #     required: true
+      #     schema:
+      #       type: array
+      #       items:
+      #         type: string
+      consumes:
+        - "application/json"
+      parameters:
+        - in: "body"
+          name: "jsonBodyList"
+          required: true
+          schema:
+            $ref: "#/definitions/jsonBodyList"
+      responses:
+        "200":
+          description: import players bulk
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        passthroughBehavior: never
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
 
   /player:
     post:
@@ -954,7 +1050,7 @@ paths:
       operationId: getAlertsPlayer
       parameters:
         - name: user_id
-          in: body
+          in: query
           description: Player id
           required: true
           schema:
@@ -1095,3 +1191,7 @@ definitions:
   Empty:
     type: object
     title: Empty Schema
+  jsonBodyList:
+    type: "array"
+    items:
+      type: "string"
