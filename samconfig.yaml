@@ -8,10 +8,8 @@ prod:
       region: us-east-1
       stack_name: GameKnightsEventsAPI
       capabilities: CAPABILITY_NAMED_IAM
-      capabilities: CAPABILITY_NAMED_IAM
       s3_bucket: cp-sam-deploy-east1
       parameter_overrides: "Mode=prod"
-      tags: Owner=EventsAPI
       tags: Owner=EventsAPI
 dev:
   build:
@@ -21,7 +19,6 @@ dev:
     parameters:
       region: us-east-1
       stack_name: DEVGameKnightsEventsAPI
-      capabilities: CAPABILITY_NAMED_IAM
       capabilities: CAPABILITY_NAMED_IAM
       s3_bucket: cp-sam-deploy-east1
       parameter_overrides: "Mode=dev"
