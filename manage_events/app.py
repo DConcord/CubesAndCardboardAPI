@@ -174,7 +174,6 @@ def lambda_handler(apiEvent, context):
           data = json.loads(apiEvent['body'])
           if len(data['date']) <= 19:
             data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo('America/Denver')).isoformat()            
-            data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo('America/Denver')).isoformat()            
           response = createEvent(data)
           print(json.dumps({
             'log_type': 'event',
@@ -198,9 +197,6 @@ def lambda_handler(apiEvent, context):
           if data['format'] == 'Reserved':
             data['event_id'] = response['event_id']
             process_reserved_event_scheduled_tasks(reserved_event=data, action='create', target_arn=context.invoked_function_arn)
-          if data['format'] == 'Reserved':
-            data['event_id'] = response['event_id']
-            process_reserved_event_scheduled_tasks(reserved_event=data, action='create', target_arn=context.invoked_function_arn)
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -221,7 +217,6 @@ def lambda_handler(apiEvent, context):
             event_updates = { k: data[k] for k in host_modifiable.intersection(set({**diff['added'], **diff['modified']}))}
             for key in  diff['removed']:
               if key not in event_updates and key in host_modifiable:
-                event_updates[key] = ''
                 event_updates[key] = ''
             if event_updates == {}:
               return {
@@ -295,7 +290,6 @@ def lambda_handler(apiEvent, context):
                 print(json.dumps(rsvp_dict))
                 send_rsvp_sqs(rsvp_dict)
           
-          
             print('Update Player Pools')
             updatePlayerPools()
             print('Event Modified; Publish public events.json')
@@ -315,23 +309,6 @@ def lambda_handler(apiEvent, context):
           data = json.loads(apiEvent['body'])
           current_event = getEvent(data['event_id'])
           if len(data['date']) <= 19:
-            data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo('America/Denver')).isoformat()
-          # Check if event format has changed to/from 'Reserved' or if reserved event date has changed
-          if (
-            'Reserved' in [current_event['format'], data['format']]  
-            and (current_event['format'] != data['format'] or current_event['date'] != data['date'])
-          ):
-            if current_event['format'] != data['format']:
-              if current_event['format'] == 'Reserved':
-                # Delete the scheduled task for the no-longer reserved event
-                _action = 'delete'
-              else:
-                # Create a new scheduled task for the newly reserved event
-                _action = 'create'
-            else:
-              # Update the scheduled task for the existing event's new date
-              _action = 'update'
-            process_reserved_event_scheduled_tasks(reserved_event=data, action=_action, target_arn=context.invoked_function_arn)
             data['date'] = datetime.fromisoformat(data['date']).replace(tzinfo=ZoneInfo('America/Denver')).isoformat()
           # Check if event format has changed to/from 'Reserved' or if reserved event date has changed
           if (
@@ -450,8 +427,6 @@ def lambda_handler(apiEvent, context):
           updatePublicEventsJson()
           if current_event['format'] == 'Reserved':
             process_reserved_event_scheduled_tasks(reserved_event=current_event, action='delete', target_arn=context.invoked_function_arn)
-          if current_event['format'] == 'Reserved':
-            process_reserved_event_scheduled_tasks(reserved_event=current_event, action='delete', target_arn=context.invoked_function_arn)
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -549,12 +524,12 @@ def lambda_handler(apiEvent, context):
           else:
             # dateGte = None # ALL
             dateGte = datetime.now(ZoneInfo('America/Denver')).date() - timedelta(days=14)
-            dateGte = datetime.now(ZoneInfo('America/Denver')).date() - timedelta(days=14)
           
           if data and 'dateLte' in data and data['dateLte']:
             if data['dateLte'] == '14d':
               dateLte = datetime.now(ZoneInfo('America/Denver')).date() - timedelta(days=14)
-              dateLte = datetime.now(ZoneInfo('America/Denver')).date() - timedelta(days=14)
+            elif data['dateLte'] == 'today':
+              dateLte = datetime.now(ZoneInfo('America/Denver')).date()
             else:
               dateLte = data['dateLte']
           else:
@@ -563,7 +538,6 @@ def lambda_handler(apiEvent, context):
           tableType = data.get('tableType', env.MODE) if data else env.MODE
           events = getEvents(dateGte = dateGte, dateLte = dateLte, tableType = tableType)
 
-          # If not an admin, filter out 'private' events of which the member is not in the player pool
           # If not an admin, filter out 'private' events of which the member is not in the player pool
           if not authorize(apiEvent, auth_groups, ['admin'], log_if_false=False):
             events = [event for event in events if not (event['format'] == 'Private' and auth_sub not in event['player_pool'])]
@@ -790,7 +764,6 @@ def lambda_handler(apiEvent, context):
               changes.append(attribute)
             for attribute, value in diff['removed'].items():
               attrib_changes.append({'Name': attribute, 'Value': ''})
-              attrib_changes.append({'Name': attribute, 'Value': ''})
               changes.append(attribute)
 
             if 'email' in changes:
@@ -874,7 +847,6 @@ def lambda_handler(apiEvent, context):
         # Player updating their own attributes
         case 'PUT':
           print('Player update own attributes')
-          print('Player update own attributes')
           data = json.loads(apiEvent['body'])
           user_id = data['user_id']
           if auth_sub != data['user_id']:
@@ -898,7 +870,6 @@ def lambda_handler(apiEvent, context):
             for attribute, value in {**diff['added'], **diff['modified']}.items():
               attrib_changes.append({'Name': attribute, 'Value': value})
             for attribute, value in diff['removed'].items():
-              attrib_changes.append({'Name': attribute, 'Value': ''})
               attrib_changes.append({'Name': attribute, 'Value': ''})
             try:
               client = boto3.client('cognito-idp')
@@ -973,7 +944,6 @@ def lambda_handler(apiEvent, context):
         # Get activity logs. Admin only
         case 'GET':
           print('Get Activity Logs')          
-          print('Get Activity Logs')          
           if not authorize(apiEvent, auth_groups, ['admin']):
             print(f"WARNING: user_id '{auth_sub}' is not authorized to get activity logs")
             return unauthorized
@@ -1033,7 +1003,6 @@ def lambda_handler(apiEvent, context):
       match method:
         case 'GET':
           print('Get Email Alert subscriptions')
-          print('Get Email Alert subscriptions')
           if not authorize(apiEvent, auth_groups, ['admin']):
             print(f"WARNING: user_id '{auth_sub}' is not authorized")
             return unauthorized
@@ -1077,9 +1046,7 @@ def lambda_handler(apiEvent, context):
           
           if auth_sub == data['user_id']:
             auth_type = 'self'
-            auth_type = 'self'
           else:
-            auth_type = 'admin'
             auth_type = 'admin'
           alert_subscriptions = data['alert_subscriptions']
           email_alert_preferences = getJsonS3(env.BACKEND_BUCKET, 'email_alert_preferences.json')
@@ -1116,9 +1083,7 @@ def lambda_handler(apiEvent, context):
 
           # Those subscribed to rsvp_all & _debug cannot also be subscribed to rsvp_hosted
           email_alert_preferences['rsvp_hosted'] = email_alert_preferences['rsvp_hosted'] - email_alert_preferences['rsvp_all'] - email_alert_preferences['rsvp_all_debug']
-          email_alert_preferences['rsvp_hosted'] = email_alert_preferences['rsvp_hosted'] - email_alert_preferences['rsvp_all'] - email_alert_preferences['rsvp_all_debug']
           # Those subscribed to rsvp_all_debug cannot also be subscribed to rsvp_all
-          email_alert_preferences['rsvp_all'] = email_alert_preferences['rsvp_all'] - email_alert_preferences['rsvp_all_debug']
           email_alert_preferences['rsvp_all'] = email_alert_preferences['rsvp_all'] - email_alert_preferences['rsvp_all_debug']
 
           s3 = boto3.client('s3')
@@ -1302,8 +1267,6 @@ def send_rsvp_sqs(rsvp_dict):
   rsvp_dict = deepcopy(rsvp_dict)    
   # rsvp_dict['timestamp'] = datetime.now().strftime('%Y%m%d%H%M%S%f')
   rsvp_dict['timestamp'] = datetime.now(ZoneInfo('UTC')).isoformat()
-  # rsvp_dict['timestamp'] = datetime.now().strftime('%Y%m%d%H%M%S%f')
-  rsvp_dict['timestamp'] = datetime.now(ZoneInfo('UTC')).isoformat()
   sqs = boto3.client('sqs')
   sqs.send_message(
     QueueUrl=env.RSVP_SQS_URL, 
@@ -1317,11 +1280,9 @@ def process_rsvp_alert_task():
   response = client.get_schedule(Name=f'rsvp_alerts_schedule_{env.MODE}', GroupName=f'rsvp_alerts_{env.MODE}')
   current_schedule = response['ScheduleExpression'][3:-1]
   if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+'Z') > datetime.now(ZoneInfo('UTC')):
-  if datetime.fromisoformat(response['ScheduleExpression'][3:-1]+'Z') > datetime.now(ZoneInfo('UTC')):
     print(f'Current rsvp process already scheduled ({current_schedule}) in the future')
     return
   
-  # Schedule RSVP alert batch processing for 60 (or 30) seconds in the future
   # Schedule RSVP alert batch processing for 60 (or 30) seconds in the future
   update_response = client.update_schedule(
     Name=f'rsvp_alerts_schedule_{env.MODE}',
@@ -1475,7 +1436,6 @@ def waitForBggPic(bgg_id):
 def createEvent(eventDict, process_bgg_id_image=True):
   eventDict = deepcopy(eventDict)    
   event_id = eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())  # temp: allow supplying event_id for 'Transfer' action. Remove on client side for 'Clone'
-  event_id = eventDict['event_id'] if 'event_id' in eventDict else str(uuid.uuid4())  # temp: allow supplying event_id for 'Transfer' action. Remove on client side for 'Clone'
   new_event = {
     'event_id': {'S': event_id},
     'event_type': {'S': eventDict['event_type'] if 'event_type' in eventDict else 'GameKnight'},
@@ -1525,7 +1485,6 @@ def createEvent(eventDict, process_bgg_id_image=True):
 ## def createEvent(eventDict) 
 
 
-def modifyEvent(eventDict, process_bgg_id_image=True):  
 def modifyEvent(eventDict, process_bgg_id_image=True):  
   eventDict = deepcopy(eventDict)             
   modified_event = {
@@ -1765,7 +1724,6 @@ def deleteRSVP(event_id, user_id, rsvp):
 def is_after_sunday_midnight_of(given_date):
   # Get Sunday of the same week
   sunday = given_date + relativedelta(weekday=SU(-1), hour=0, minute=0, second=0)
-  sunday = given_date + relativedelta(weekday=SU(-1), hour=0, minute=0, second=0)
 
   # Compare current datetime to midnight of that Sunday
   tzinfo = given_date.tzinfo
@@ -1856,15 +1814,7 @@ def updatePlayerPools():
   event_updates = defaultdict(dict)
   upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).isoformat()[:19])
   # upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).date()) # 
-  upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).isoformat()[:19])
-  # upcomingEvents = getEvents(dateGte=datetime.now(ZoneInfo("America/Denver")).date()) # 
 
-  # print(json.dumps({
-  #   "upcomingEvents": [{'event_id': event['event_id'], 'format': event['format'], 'date': event['date']}  for event in upcomingEvents],
-  #   "now": datetime.now(ZoneInfo("America/Denver")).isoformat()[:19],
-  #   "in2hr": (datetime.now(ZoneInfo("America/Denver")) + timedelta(hours=2)).isoformat()[:19],
-  #   "date": datetime.now(ZoneInfo("America/Denver")).date().isoformat()[:19]
-  # }, default=ddb_default))
   # print(json.dumps({
   #   "upcomingEvents": [{'event_id': event['event_id'], 'format': event['format'], 'date': event['date']}  for event in upcomingEvents],
   #   "now": datetime.now(ZoneInfo("America/Denver")).isoformat()[:19],
@@ -1879,7 +1829,6 @@ def updatePlayerPools():
       event['format'] == 'Open' or 
       (event['format'] == 'Reserved' and 'open_rsvp_eligibility' in event and event['open_rsvp_eligibility'] == True)
     ):
-      if set(players) != set(event['player_pool']):
       if set(players) != set(event['player_pool']):
         print(f"event {event['event_id']} update 1")
         event_updates[event['event_id']]['player_pool'] = set(players)
