@@ -413,6 +413,40 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
+        
+        # /gametutorial
+        GetGameTutorials:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /gametutorial
+            Method: GET 
+            Auth:
+              Authorizer: NONE
+        GameTutorialsPut:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /gametutorial
+            Method: PUT
+            Auth:
+              Authorizer: CognitoPasswordless     
+        GameTutorialsDelete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway
+            Path: /gametutorial
+            Method: DELETE
+            Auth:
+              Authorizer: CognitoPasswordless       
+        GameTutorialsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EventsApiGateway  
+            Path: /gametutorials
+            Method: OPTIONS
+            Auth:
+              Authorizer: NONE
 
         # /activitylogs
         GetActivityLogs:

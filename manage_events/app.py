@@ -937,6 +937,49 @@ def lambda_handler(apiEvent, context):
               'headers': {'Access-Control-Allow-Origin': origin},
               'body': json.dumps({'message': 'No Changes'})
             }
+    
+    case '/gametutorial':
+      match method:
+        case 'GET':
+          print('Get Game Tutorials')
+          game_tutorials = getGameTutorials()
+          return {
+            'statusCode': 200,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(game_tutorials, default=ddb_default),
+          }
+        
+        case 'PUT':
+          print('Update Game Tutorials')
+          if not authorize(apiEvent, auth_groups, ['admin']): 
+            print(f"WARNING: user_id '{auth_sub}' is not an admin. not authorized")
+            return unauthorized
+          game_tutorials = getGameTutorials()
+          data = json.loads(apiEvent['body'])
+          game_tutorials[data['bgg_id']] = data
+          updateGameTutorials(game_tutorials)
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(game_tutorials, default=ddb_default),
+          }
+        
+        case 'DELETE':
+          print('Delete Game Tutorial')
+          if not authorize(apiEvent, auth_groups, ['admin']): 
+            print(f"WARNING: user_id '{auth_sub}' is not an admin. not authorized")
+            return unauthorized
+          game_tutorials = getGameTutorials()
+          params = apiEvent.get('queryStringParameters', {})
+          bgg_id = params['bgg_id']
+          if bgg_id in game_tutorials:
+            del game_tutorials[bgg_id]
+            updateGameTutorials(game_tutorials)
+          return {
+            'statusCode': 201,
+            'headers': {'Access-Control-Allow-Origin': origin},
+            'body': json.dumps(game_tutorials, default=ddb_default),
+          }
 
     case '/activitylogs':
       match method:
@@ -1182,6 +1225,9 @@ def init_bootstrap():
       elif type == "updatePlayerPoolsAndPublicEventsJson":
         print('Update Player Pools and Public Events JSON complete')
 
+  print('Initializing game_tutorials.json')
+  game_tutorials = getGameTutorials()
+  
   print('Init Bootstrap Complete')  
 
 
@@ -2044,6 +2090,28 @@ def replaceUserId(old_user_id, new_user_id, events=None):
       event['player_pool'] = list(event['player_pool'])
       modifyEvent(event, process_bgg_id_image=False)
   return update_log
+
+def getGameTutorials():
+  try:
+    return getJsonS3(env.S3_BUCKET, 'game_tutorials.json')
+  except botocore.exceptions.ClientError as e:
+    if e.response['Error']['Code'] == 'NoSuchKey':
+      print("game_tutorials.json does not exist. Creating and Returning empty dictionary.")
+      updateGameTutorials({})
+      return {}
+    else:
+      raise
+
+def updateGameTutorials(game_tutorials):
+  s3 = boto3.client('s3')
+  s3.put_object(
+    Body=json.dumps(game_tutorials, indent=2, default=ddb_default),
+    Bucket=env.S3_BUCKET,
+    Key='game_tutorials.json',
+    ContentType='application/json',
+    CacheControl='no-cache'
+  )
+  print('game_tutorials.json updated')
 
 
 if __name__ == '__main__':
