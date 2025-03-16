@@ -956,8 +956,24 @@ def lambda_handler(apiEvent, context):
             return unauthorized
           game_tutorials = getGameTutorials()
           data = json.loads(apiEvent['body'])
-          game_tutorials[data['bgg_id']] = data
+          bgg_id = str(data['bgg_id'])
+          if bgg_id in game_tutorials:
+            action = 'update'
+            previous = json.dumps(game_tutorials[bgg_id], default=ddb_default)
+          else:
+            action = 'create'
+            previous = ''
+          new = json.dumps(data, default=ddb_default)     
+          game_tutorials[bgg_id] = data
           updateGameTutorials(game_tutorials)
+          print(json.dumps({
+            'log_type': 'game_tutorial',
+            'action': action,
+            'auth_sub': auth_sub,
+            'auth_type': 'admin',
+            'previous': previous,
+            'new': new,
+          }, default=ddb_default))
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -971,10 +987,20 @@ def lambda_handler(apiEvent, context):
             return unauthorized
           game_tutorials = getGameTutorials()
           params = apiEvent.get('queryStringParameters', {})
-          bgg_id = params['bgg_id']
+          bgg_id = str(params['bgg_id'])
           if bgg_id in game_tutorials:
+            print(json.dumps({
+              'log_type': 'game_tutorial',
+              'action': 'delete',
+              'auth_sub': auth_sub,
+              'auth_type': 'admin',
+              'previous': json.dumps(game_tutorials[bgg_id], default=ddb_default),
+              'new': '',
+            }, default=ddb_default))
             del game_tutorials[bgg_id]
             updateGameTutorials(game_tutorials)
+          else:
+            print(f"WARNING: Game Tutorial with bgg_id '{bgg_id}' does not exist")
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
@@ -1008,7 +1034,7 @@ def lambda_handler(apiEvent, context):
             endTime = int(datetime.now().timestamp())
 
           client = boto3.client('logs')
-          query = f'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp", "email_subscription"] | sort @timestamp desc'
+          query = f'fields @timestamp, log_type, action, event_id, date, user_id, action, rsvp, auth_sub, auth_type, previous, new, attrib | filter log_type in ["player", "event", "rsvp", "email_subscription", "game_tutorial"] | sort @timestamp desc'
           log_group = f'/aws/lambda/manage_events_{env.MODE}'
           start_query_response = client.start_query(
               logGroupName=log_group,
