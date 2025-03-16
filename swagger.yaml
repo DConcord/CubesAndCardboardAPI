@@ -948,12 +948,136 @@ paths:
               pattern: "(^[1-9][0-9]?$|^100$)"
       responses:
         "200":
-          description: Get Activity Logs
+          description: Game Search
         "400":
           description: bad input parameter
       x-amazon-apigateway-integration:
         uri:
           Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${BggSearchFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    options:
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: "200 response"
+          schema:
+            $ref: "#/definitions/Empty"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+            Access-Control-Allow-Methods:
+              type: string
+            Access-Control-Allow-Headers:
+              type: string
+      security:
+        - NONE: []
+      x-amazon-apigateway-integration:
+        responses:
+          default:
+            statusCode: "200"
+            responseParameters:
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        requestTemplates:
+          application/json: '{"statusCode": 200}'
+        passthroughBehavior: when_no_match
+        type: mock
+
+  /gametutorial:
+    get:
+      tags:
+        - gametutorials
+      summary: Curated list of game tutorials
+      description: Curated list of game tutorials
+      operationId: gameTutorials
+      responses:
+        "200":
+          description: Get Game Tutorials
+        "400":
+          description: bad input parameter
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        httpMethod: POST
+        type: aws_proxy
+
+    put:
+      tags:
+        - gametutorial
+      summary: Update game tutorial
+      description: Update game tutorial
+      operationId: updateGameTutorial
+      x-amazon-apigateway-request-validator: body-headers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required:
+                - bgg_id
+                - game
+                - url
+              type: object
+              properties:
+                bgg_id:
+                  type: integer
+                  description: BoardGameGeek.com Game ID
+                game:
+                  type: string
+                url:
+                  type: string
+      responses:
+        "201":
+          description: updated
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+        "400":
+          description: "invalid input, object invalid"
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
+        responses:
+          default:
+            statusCode: 201
+            responseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        passthroughBehavior: when_no_match
+        httpMethod: POST
+        type: aws_proxy
+
+    delete:
+      tags:
+        - gametutorial
+      summary: Delete game tutorial
+      operationId: deleteGameTutorial
+      x-amazon-apigateway-request-validator: params-headers
+      parameters:
+        - name: bgg_id
+          in: query
+          description: Delete game tutorial by BGG ID
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tutorial Deleted
+        "400":
+          description: bad input parameter
+          headers:
+            Access-Control-Allow-Origin:
+              type: string
+      x-amazon-apigateway-integration:
+        uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ManageEventsFunction.Arn}/invocations"
         httpMethod: POST
         type: aws_proxy
 
