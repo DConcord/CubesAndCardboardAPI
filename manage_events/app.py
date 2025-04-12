@@ -110,6 +110,12 @@ def lambda_handler(apiEvent, context):
         print(json.dumps(apiEvent, default=ddb_default))
         init_bootstrap()
         return {'statusCode': 200, 'body': 'OK'}
+
+      case 'refactorGameTutorials':
+        print('apiEvent.action: refactorGameTutorials')
+        print(json.dumps(apiEvent, default=ddb_default))
+        refactorGameTutorials()
+        return {'statusCode': 200, 'body': 'OK'}
       
       # default
       case _:
@@ -2139,6 +2145,24 @@ def updateGameTutorials(game_tutorials):
   )
   print('game_tutorials.json updated')
 
+def refactorGameTutorials():
+  game_tutorials = getGameTutorials()
+  new_game_tutorials = {}
+  for bgg_id, data in game_tutorials.items():
+    if 'url' in data:
+      try:
+        new_game_tutorials[bgg_id] = {
+          'bgg_id': data['bgg_id'],
+          'game': data['game'],
+          'type': 'url',
+          'content': data['url']
+        }
+      except:
+        print(json.dumps(data, default=ddb_default))
+        raise
+    else:
+      new_game_tutorials[bgg_id] = data
+  updateGameTutorials(new_game_tutorials)
 
 if __name__ == '__main__':
   # email_alert_preferences = {

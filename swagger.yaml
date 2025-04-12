@@ -1021,7 +1021,8 @@ paths:
               required:
                 - bgg_id
                 - game
-                - url
+                - type
+                - content
               type: object
               properties:
                 bgg_id:
@@ -1029,7 +1030,9 @@ paths:
                   description: BoardGameGeek.com Game ID
                 game:
                   type: string
-                url:
+                type:
+                  type: string
+                content:
                   type: string
       responses:
         "201":
