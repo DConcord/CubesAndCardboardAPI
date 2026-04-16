@@ -8,7 +8,7 @@ boto3 = "*"
 pillow = "*"
 xmltodict = "*"
 requests = "*"
-thefuzz = "*"
+rapidfuzz = "*"
 
 [dev-packages]
 
