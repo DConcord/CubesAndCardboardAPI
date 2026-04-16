@@ -84,7 +84,8 @@ def retrieve_bgg_image(bgg_id):
     
     if os.path.exists(bgg_image_original) == False:
         # Retrieve game data
-        bgg_id_url = f"https://api.geekdo.com/xmlapi2/thing?id={bgg_id}"
+        bgg_id_url = f"https://boardgamegeek.com/xmlapi2/thing?id={bgg_id}"
+        # bgg_id_url = f"https://api.geekdo.com/xmlapi2/thing?id={bgg_id}"
         response = requests.get(bgg_id_url)
         data = xmltodict.parse(response.content)
 

@@ -1,1 +1,1 @@
-thefuzz
+rapidfuzz==3.9.7

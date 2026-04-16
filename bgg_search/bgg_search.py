@@ -1,6 +1,7 @@
 # aws s3 cp ./boardgames_ranks.csv s3://dev-cubes-and-cardboard-backend/
 import json
-from thefuzz import fuzz
+# from thefuzz import fuzz
+from rapidfuzz import fuzz
 import csv
 
 ALLOWED_ORIGINS = [
@@ -33,11 +34,11 @@ def lambda_handler(event, context):
 
 
   game = event['queryStringParameters']['game'] if 'game' in event['queryStringParameters'] else None
-  threshold = int(event['queryStringParameters']['threshold']) if 'threshold' in event['queryStringParameters'] else 90
+  threshold = int(event['queryStringParameters']['threshold']) if 'threshold' in event['queryStringParameters'] else 80
   results = []
   bgg_ranks = csv.DictReader(open("boardgames_ranks.csv"))
   for row in bgg_ranks:
-    match = fuzz.partial_ratio(game.lower(), row['name'].lower())
+    match = fuzz.token_sort_ratio(game.lower(), row['name'].lower())
     if match > threshold:
       row['partial_ratio'] = match
       results.append(row)
@@ -60,20 +61,23 @@ def lambda_handler(event, context):
 if __name__ == '__main__':
   
   
-  search = "furnace"
+  search = "The Manhattan Project Energy Empre"
 
   results = []
   bgg_ranks = csv.DictReader(open("boardgames_ranks.csv"))
   # bgg_ranks = csv.DictReader(getS3Object('dev-cubes-and-cardboard-backend', 'boardgames_ranks.csv'))
   # print(bgg_ranks.fieldnames)
   for row in bgg_ranks:
-    match = fuzz.partial_ratio(search.lower(), row['name'].lower())
-    if match > 90:
+    match = fuzz.token_sort_ratio(search.lower(), row['name'].lower())
+    # match = fuzz.partial_ratio(search.lower(), row['name'].lower())
+    if match > 75:
       row['partial_ratio'] = match
       results.append(row)
     # results
     # print(f"Similarity score: {fuzz.partial_ratio(search.lower(), row['name'].lower())}")
-  print(json.dumps(sorted(results, key=lambda k: k['partial_ratio']), indent=2))
+  print(json.dumps(results, indent=2))
+  # print(json.dumps(sorted(results, key=lambda k: k['partial_ratio']), indent=2))
+
   # print(bgg_ranks)
   # full_name = "Star Wars: X-Wing (Second Edition)"
 
