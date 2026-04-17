@@ -44,9 +44,8 @@ sam delete --stack-name GameKnightsEventsAPI --region us-east-1
 ## Sandbox
 
 ```
-sam build --config-env sandbox && sam deploy --config-env sandbox && date
-
 aws s3 cp ./rsvp_alerts_ts/template.html s3://sandbox-cubes-and-cardboard-backend
+sam build --config-env sandbox && sam deploy --config-env sandbox && date
 ```
 
 ## Dev

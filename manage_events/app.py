@@ -230,7 +230,7 @@ def lambda_handler(apiEvent, context):
                 'headers': {'Access-Control-Allow-Origin': origin}
               }
             if 'bgg_id' in event_updates and event_updates['bgg_id'] > 0 :
-              process_bgg_id(event_updates['bgg_id'])
+              process_bgg_image(event_updates['bgg_id'])
             try:
               updateEvent(data['event_id'], event_updates)
             except Exception as e:
@@ -1474,7 +1474,7 @@ def process_reserved_event_scheduled_tasks(reserved_event, action, target_arn):
 
 # Check whether bgg image has already been pulled and send 
 # an SNS to trigger pulling/resizing/saving it if not
-def process_bgg_id(bgg_id):
+def process_bgg_image(bgg_id, pic_url=None):
   global pull_bgg_pic
   s3 = boto3.client('s3')
   key = f'{bgg_id}.png'
@@ -1484,19 +1484,25 @@ def process_bgg_id(bgg_id):
     # send message to SNS
     print(f"Sending message to SNS: '{bgg_id}#{env.SNS_TOPIC_ARN}'")
     sns = boto3.client('sns')
+    message_attributes = {
+      's3_bucket': {
+        'DataType': 'String',
+        'StringValue': env.S3_BUCKET
+      },
+      'bgg_id': {
+        'DataType': 'String',
+        'StringValue': str(bgg_id)
+      }
+    }
+    if pic_url:
+      message_attributes['pic_url'] = {
+        'DataType': 'String',
+        'StringValue': pic_url
+      }
     sns.publish(
       TopicArn=env.SNS_TOPIC_ARN,
       Message=f'{bgg_id}#{env.S3_BUCKET}',
-      MessageAttributes={
-        's3_bucket': {
-          'DataType': 'String',
-          'StringValue': env.S3_BUCKET
-        },
-        'bgg_id': {
-          'DataType': 'String',
-          'StringValue': str(bgg_id)
-        }
-      }
+      MessageAttributes=message_attributes
     )
 
 
@@ -1531,8 +1537,9 @@ def createEvent(eventDict, process_bgg_id_image=True):
   if 'bgg_id' in eventDict: new_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict:  new_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: new_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  if 'pic_url' in eventDict and eventDict['pic_url']: new_event['pic_url'] = {'S': eventDict['pic_url']}
   # if 'migrated' in eventDict: new_event['migrated'] = {'BOOL': eventDict['migrated']}
-  if 'not_attending' in eventDict: 
+  if 'not_attending' in eventDict:
     new_event['not_attending'] = {'SS': eventDict['not_attending']}
   else :
     new_event['not_attending'] = {'SS': ['placeholder']}
@@ -1547,7 +1554,7 @@ def createEvent(eventDict, process_bgg_id_image=True):
 
   # Start processing download for new game image if necessary
   if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id']:
-    process_bgg_id(eventDict['bgg_id'])
+    process_bgg_image(eventDict['bgg_id'], eventDict.get('pic_url'))
 
   ddb = boto3.client('dynamodb', region_name='us-east-1')
   response = ddb.put_item(
@@ -1582,8 +1589,9 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
   if 'bgg_id' in eventDict: modified_event['bgg_id'] = {'N': str(eventDict['bgg_id'])}
   if 'total_spots' in eventDict: modified_event['total_spots'] = {'N': str(eventDict['total_spots'])}
   if 'tbd_pic' in eventDict: modified_event['tbd_pic'] = {'S': eventDict['tbd_pic']}
+  if 'pic_url' in eventDict and eventDict['pic_url']: modified_event['pic_url'] = {'S': eventDict['pic_url']}
   # if 'migrated' in eventDict: modified_event['migrated'] = {'BOOL': eventDict['migrated']}
-  if 'not_attending' in eventDict: 
+  if 'not_attending' in eventDict:
     modified_event['not_attending'] = {'SS': list(eventDict['not_attending'])}
   else :
     modified_event['not_attending'] = {'SS': ['placeholder']}
@@ -1598,7 +1606,7 @@ def modifyEvent(eventDict, process_bgg_id_image=True):
 
   if process_bgg_id_image and 'bgg_id' in eventDict and eventDict['bgg_id'] and eventDict['bgg_id'] > 0:
     print(json.dumps({"process_bgg_id_image": process_bgg_id_image, "'bgg_id' in eventDict": 'bgg_id' in eventDict, "bgg_id": eventDict['bgg_id']}))
-    process_bgg_id(eventDict['bgg_id'])
+    process_bgg_image(eventDict['bgg_id'], eventDict.get('pic_url'))
 
   # date = parser.parse(text).date().isoformat()
   ddb = boto3.client('dynamodb', region_name='us-east-1')

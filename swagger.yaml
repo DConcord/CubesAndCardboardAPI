@@ -253,6 +253,26 @@ paths:
                     type: string
                 tbd_pic:
                   type: string
+                pic_url:
+                  type: string
+                  format: uri
+                  description: Admin-supplied image URL; bypasses BGG API image fetch when present
+                status:
+                  type: string
+                  enum: [Normal, Cancelled]
+                open_rsvp_eligibility:
+                  type: boolean
+                finalScore:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      place:
+                        type: integer
+                      player:
+                        type: string
+                      score:
+                        type: string
                 migrated:
                   type: boolean
       responses:
@@ -378,6 +398,26 @@ paths:
                     type: string
                 tbd_pic:
                   type: string
+                pic_url:
+                  type: string
+                  format: uri
+                  description: Admin-supplied image URL; bypasses BGG API image fetch when present
+                status:
+                  type: string
+                  enum: [Normal, Cancelled]
+                open_rsvp_eligibility:
+                  type: boolean
+                finalScore:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      place:
+                        type: integer
+                      player:
+                        type: string
+                      score:
+                        type: string
                 migrated:
                   type: boolean
 
@@ -1312,6 +1352,10 @@ components:
             type: string
         tbd_pic:
           type: string
+        pic_url:
+          type: string
+          format: uri
+          description: Admin-supplied image URL; bypasses BGG API image fetch when present
         migrated:
           type: boolean
 definitions:
