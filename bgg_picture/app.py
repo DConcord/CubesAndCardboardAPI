@@ -18,11 +18,13 @@ def lambda_handler(event, context):
 
         bgg_id = record['Sns']['MessageAttributes']['bgg_id']['Value']
         bucket = record['Sns']['MessageAttributes']['s3_bucket']['Value']
+        pic_url = record['Sns']['MessageAttributes'].get('pic_url', {}).get('Value')
+        refresh_image = record['Sns']['MessageAttributes'].get('refresh_image', {}).get('Value') == 'true'
 
         if key_exists(s3, bucket, f'{bgg_id}.png'):
           print(f"{bgg_id}.png already exists")
           continue
-        retrieve_bgg_image(bgg_id)
+        retrieve_bgg_image(bgg_id, pic_url)
 
         # Resize
         img = Image.open(f"/tmp/{bgg_id}_original.png")
@@ -51,6 +53,17 @@ def lambda_handler(event, context):
           f"{bgg_id}.png",
         )
 
+        if refresh_image:
+          cf = boto3.client('cloudfront')
+          cf.create_invalidation(
+            DistributionId=os.environ['CLOUDFRONT_DISTRIBUTION_ID'],
+            InvalidationBatch={
+              'Paths': {'Quantity': 1, 'Items': [f'/{bgg_id}.png']},
+              'CallerReference': str(bgg_id)
+            }
+          )
+          print(f"CloudFront invalidation created for /{bgg_id}.png")
+
 def key_exists(s3, bucket, key):
     try:
         s3.head_object(Bucket=bucket, Key=key)
@@ -75,26 +88,30 @@ def resize_with_padding(img, expected_size):
     padding = (pad_width, pad_height, delta_width - pad_width, delta_height - pad_height)
     return ImageOps.expand(img, padding)
 
-def retrieve_bgg_image(bgg_id):
+def retrieve_bgg_image(bgg_id, pic_url=None):
     bgg_image_original = f"/tmp/{bgg_id}_original.png"
     bgg_image_resized = f"/tmp/{bgg_id}.png"
 
     if os.path.exists(bgg_image_resized):
         return
-    
-    if os.path.exists(bgg_image_original) == False:
-        # Retrieve game data
-        bgg_id_url = f"https://boardgamegeek.com/xmlapi2/thing?id={bgg_id}"
-        # bgg_id_url = f"https://api.geekdo.com/xmlapi2/thing?id={bgg_id}"
-        response = requests.get(bgg_id_url)
-        data = xmltodict.parse(response.content)
 
-        # Retrieve game image
-        bgg_image_url = data["items"]["item"]["image"]
-        response = requests.get(bgg_image_url, stream=True)
+    if os.path.exists(bgg_image_original) == False:
+        if pic_url:
+            # Use the admin-supplied URL instead of calling the BGG API
+            print(f"Using custom pic_url for bgg_id {bgg_id}: {pic_url}")
+            image_url = pic_url
+        else:
+            # Retrieve game image URL from BGG API
+            bgg_id_url = f"https://boardgamegeek.com/xmlapi2/thing?id={bgg_id}"
+            # bgg_id_url = f"https://api.geekdo.com/xmlapi2/thing?id={bgg_id}"
+            response = requests.get(bgg_id_url)
+            data = xmltodict.parse(response.content)
+            image_url = data["items"]["item"]["image"]
+
+        response = requests.get(image_url, stream=True)
         with open(bgg_image_original, 'wb') as out_file:
             shutil.copyfileobj(response.raw, out_file)
-        
+
         return bgg_image_original
 
     

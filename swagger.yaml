@@ -209,6 +209,7 @@ paths:
                 - attending
                 - not_attending
               type: object
+              additionalProperties: false
               properties:
                 event_id: # Ignored if supplied for new event (generated in lambda)
                   type: string
@@ -249,10 +250,31 @@ paths:
                   items:
                     type: string
                 organizer_pool:
+                  type: array
                   items:
                     type: string
                 tbd_pic:
                   type: string
+                pic_url:
+                  type: string
+                  format: uri
+                  description: Admin-supplied image URL; bypasses BGG API image fetch when present
+                status:
+                  type: string
+                  enum: [Normal, Cancelled]
+                open_rsvp_eligibility:
+                  type: boolean
+                finalScore:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      place:
+                        type: integer
+                      player:
+                        type: string
+                      score:
+                        type: string
                 migrated:
                   type: boolean
       responses:
@@ -334,6 +356,7 @@ paths:
                 - attending
                 - not_attending
               type: object
+              additionalProperties: false
               properties:
                 event_id:
                   type: string
@@ -374,12 +397,36 @@ paths:
                   items:
                     type: string
                 organizer_pool:
+                  type: array
                   items:
                     type: string
                 tbd_pic:
                   type: string
+                pic_url:
+                  type: string
+                  format: uri
+                  description: Admin-supplied image URL; bypasses BGG API image fetch when present
+                status:
+                  type: string
+                  enum: [Normal, Cancelled]
+                open_rsvp_eligibility:
+                  type: boolean
+                finalScore:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      place:
+                        type: integer
+                      player:
+                        type: string
+                      score:
+                        type: string
                 migrated:
                   type: boolean
+                refresh_image:
+                  type: boolean
+                  description: If true, deletes the existing cached image before re-fetching; ephemeral, not stored in DynamoDB
 
       responses:
         "201":
@@ -684,6 +731,7 @@ paths:
                 - email
                 - groups
               type: object
+              additionalProperties: false
               properties:
                 given_name:
                   type: string
@@ -726,6 +774,7 @@ paths:
                 - email
                 - groups
               type: object
+              additionalProperties: false
               properties:
                 user_id:
                   type: string
@@ -805,6 +854,7 @@ paths:
                 - email
                 - accessToken
               type: object
+              additionalProperties: false
               properties:
                 user_id:
                   type: string
@@ -820,6 +870,12 @@ paths:
                   type: string
                   pattern: '(^$|^\+1[0-9]{10}$)'
                 accessToken:
+                  type: string
+                groups: # sent by client for UI rendering; not processed by Lambda
+                  type: array
+                  items:
+                    type: string
+                custom:prev_sub: # sent by client for UI rendering; not processed by Lambda
                   type: string
       responses:
         "201":
@@ -1024,6 +1080,7 @@ paths:
                 - type
                 - content
               type: object
+              additionalProperties: false
               properties:
                 bgg_id:
                   type: integer
@@ -1210,6 +1267,7 @@ paths:
                 - user_id
                 - alert_subscriptions
               type: object
+              additionalProperties: false
               properties:
                 user_id:
                   type: string
@@ -1308,10 +1366,15 @@ components:
           items:
             type: string
         organizer_pool:
+          type: array
           items:
             type: string
         tbd_pic:
           type: string
+        pic_url:
+          type: string
+          format: uri
+          description: Admin-supplied image URL; bypasses BGG API image fetch when present
         migrated:
           type: boolean
 definitions:
