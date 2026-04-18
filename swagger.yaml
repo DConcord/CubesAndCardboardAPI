@@ -209,6 +209,7 @@ paths:
                 - attending
                 - not_attending
               type: object
+              additionalProperties: false
               properties:
                 event_id: # Ignored if supplied for new event (generated in lambda)
                   type: string
@@ -354,6 +355,7 @@ paths:
                 - attending
                 - not_attending
               type: object
+              additionalProperties: false
               properties:
                 event_id:
                   type: string
@@ -420,6 +422,9 @@ paths:
                         type: string
                 migrated:
                   type: boolean
+                refresh_image:
+                  type: boolean
+                  description: If true, deletes the existing cached image before re-fetching; ephemeral, not stored in DynamoDB
 
       responses:
         "201":
@@ -724,6 +729,7 @@ paths:
                 - email
                 - groups
               type: object
+              additionalProperties: false
               properties:
                 given_name:
                   type: string
@@ -766,6 +772,7 @@ paths:
                 - email
                 - groups
               type: object
+              additionalProperties: false
               properties:
                 user_id:
                   type: string
@@ -845,6 +852,7 @@ paths:
                 - email
                 - accessToken
               type: object
+              additionalProperties: false
               properties:
                 user_id:
                   type: string
@@ -1064,6 +1072,7 @@ paths:
                 - type
                 - content
               type: object
+              additionalProperties: false
               properties:
                 bgg_id:
                   type: integer
@@ -1250,6 +1259,7 @@ paths:
                 - user_id
                 - alert_subscriptions
               type: object
+              additionalProperties: false
               properties:
                 user_id:
                   type: string

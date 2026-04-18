@@ -19,6 +19,7 @@ def lambda_handler(event, context):
         bgg_id = record['Sns']['MessageAttributes']['bgg_id']['Value']
         bucket = record['Sns']['MessageAttributes']['s3_bucket']['Value']
         pic_url = record['Sns']['MessageAttributes'].get('pic_url', {}).get('Value')
+        refresh_image = record['Sns']['MessageAttributes'].get('refresh_image', {}).get('Value') == 'true'
 
         if key_exists(s3, bucket, f'{bgg_id}.png'):
           print(f"{bgg_id}.png already exists")
@@ -51,6 +52,17 @@ def lambda_handler(event, context):
           bucket,
           f"{bgg_id}.png",
         )
+
+        if refresh_image:
+          cf = boto3.client('cloudfront')
+          cf.create_invalidation(
+            DistributionId=os.environ['CLOUDFRONT_DISTRIBUTION_ID'],
+            InvalidationBatch={
+              'Paths': {'Quantity': 1, 'Items': [f'/{bgg_id}.png']},
+              'CallerReference': str(bgg_id)
+            }
+          )
+          print(f"CloudFront invalidation created for /{bgg_id}.png")
 
 def key_exists(s3, bucket, key):
     try:
