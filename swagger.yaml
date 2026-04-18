@@ -250,6 +250,7 @@ paths:
                   items:
                     type: string
                 organizer_pool:
+                  type: array
                   items:
                     type: string
                 tbd_pic:
@@ -396,6 +397,7 @@ paths:
                   items:
                     type: string
                 organizer_pool:
+                  type: array
                   items:
                     type: string
                 tbd_pic:
@@ -868,6 +870,12 @@ paths:
                   type: string
                   pattern: '(^$|^\+1[0-9]{10}$)'
                 accessToken:
+                  type: string
+                groups: # sent by client for UI rendering; not processed by Lambda
+                  type: array
+                  items:
+                    type: string
+                custom:prev_sub: # sent by client for UI rendering; not processed by Lambda
                   type: string
       responses:
         "201":
@@ -1358,6 +1366,7 @@ components:
           items:
             type: string
         organizer_pool:
+          type: array
           items:
             type: string
         tbd_pic:
