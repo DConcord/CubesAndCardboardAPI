@@ -7,6 +7,12 @@ import os
 import botocore
 import json
 
+_ssm = boto3.client('ssm', region_name='us-east-1')
+_bgg_api_token = _ssm.get_parameter(
+    Name=os.environ['BGG_API_TOKEN_PARAM'],
+    WithDecryption=True
+)['Parameter']['Value']
+
 def lambda_handler(event, context):
     s3 = boto3.client("s3", region_name="us-east-1")
     for record in event['Records']:
@@ -103,12 +109,15 @@ def retrieve_bgg_image(bgg_id, pic_url=None):
         else:
             # Retrieve game image URL from BGG API
             bgg_id_url = f"https://boardgamegeek.com/xmlapi2/thing?id={bgg_id}"
-            # bgg_id_url = f"https://api.geekdo.com/xmlapi2/thing?id={bgg_id}"
-            response = requests.get(bgg_id_url)
+            response = requests.get(
+                bgg_id_url,
+                headers={'Authorization': f'Bearer {_bgg_api_token}'},
+                timeout=10
+            )
             data = xmltodict.parse(response.content)
             image_url = data["items"]["item"]["image"]
 
-        response = requests.get(image_url, stream=True)
+        response = requests.get(image_url, stream=True, timeout=10)
         with open(bgg_image_original, 'wb') as out_file:
             shutil.copyfileobj(response.raw, out_file)
 

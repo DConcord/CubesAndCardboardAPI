@@ -113,16 +113,34 @@ node .aws-sam/build/RsvpAlertsFunction/app.js
 
 NOTE: replace "sandbox" with appropriate environment
 
+### Pre-deploy: SSM parameters (one-time, before first `sam deploy`)
+
+BGG API token — global, not per-environment:
+
+```
+aws ssm put-parameter \
+  --name "/cubesandcardboard/bgg/api-token" \
+  --value "YOUR_BGG_TOKEN" \
+  --type SecureString \
+  --region us-east-1
+```
+
+To rotate an existing token, add `--overwrite`.
+
+### Post-deploy: Bootstrap DB and S3
+
+```
 aws lambda invoke \
- --region us-east-1 \
- --function-name manage_events_sandbox \
- --cli-binary-format raw-in-base64-out \
- --payload '{ "action": "initBootstrap" }' -
+  --region us-east-1 \
+  --function-name manage_events_sandbox \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{ "action": "initBootstrap" }' -
 
 aws s3 cp ./rsvp_alerts_ts/template.html s3://sandbox-cubes-and-cardboard-backend
 
 aws lambda invoke \
- --region us-east-1 \
- --function-name manage_events_sandbox \
- --cli-binary-format raw-in-base64-out \
- --payload '{ "action": "updatePrevSubEvents" }' -
+  --region us-east-1 \
+  --function-name manage_events_sandbox \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{ "action": "updatePrevSubEvents" }' -
+```

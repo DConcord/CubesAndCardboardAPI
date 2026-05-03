@@ -634,6 +634,12 @@ Resources:
         - arm64
       MemorySize: 512
       Timeout: 30
+      Environment:
+        Variables:
+          BGG_API_TOKEN_PARAM: /cubesandcardboard/bgg/api-token
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: cubesandcardboard/bgg/api-token
       Events:
         GameSearch:
           Type: Api
@@ -720,6 +726,7 @@ Resources:
       Environment:
         Variables:
           CLOUDFRONT_DISTRIBUTION_ID: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/cloudfront-distribution-id}}"
+          BGG_API_TOKEN_PARAM: /cubesandcardboard/bgg/api-token
       Events:
         MySNSEvent:
           Type: SNS
@@ -736,6 +743,8 @@ Resources:
           - Effect: Allow
             Action: cloudfront:CreateInvalidation
             Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+        - SSMParameterReadPolicy:
+            ParameterName: cubesandcardboard/bgg/api-token
 
       Tags:
         Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
