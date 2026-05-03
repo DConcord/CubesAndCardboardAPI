@@ -128,7 +128,7 @@ def lambda_handler(apiEvent, context):
             'body': json.dumps({'message': f'Unexpected action: {apiEvent.get('action')}'}),
           }
     
-    print('Unexpected Event (1)')
+    print('WARNING: Unexpected Event (1)')
     print(json.dumps(apiEvent, default=ddb_default))
     return {
       'statusCode': 401,
@@ -136,7 +136,7 @@ def lambda_handler(apiEvent, context):
       'body': json.dumps({'message': 'Unexpected Event (1)'})#, 'event': apiEvent}, default=ddb_default),
     }
   else:
-    print('Unexpected Event (2)')
+    print('WARNING: Unexpected Event (2)')
     print(json.dumps(apiEvent, default=ddb_default))
     return {
       'statusCode': 401,
@@ -199,7 +199,7 @@ def lambda_handler(apiEvent, context):
           try:
             if pull_bgg_pic: waitForBggPic(data['bgg_id'])
           except Exception as e:
-              print(e)
+              print(f"WARNING: waitForBggPic failed: {e}")
           if data['format'] == 'Reserved':
             data['event_id'] = response['event_id']
             process_reserved_event_scheduled_tasks(reserved_event=data, action='create', target_arn=context.invoked_function_arn)
@@ -304,13 +304,13 @@ def lambda_handler(apiEvent, context):
             try:
               if pull_bgg_pic: waitForBggPic(data['bgg_id'])
             except Exception as e:
-                print(e)
+                print(f"WARNING: waitForBggPic failed: {e}")
             return {
               'statusCode': 201,
               'headers': {'Access-Control-Allow-Origin': origin},
               'body': json.dumps({'result': 'Event Modified'})
             }
-          
+
           print('Modify Event')
           data = json.loads(apiEvent['body'])
           current_event = getEvent(data['event_id'])
@@ -402,13 +402,13 @@ def lambda_handler(apiEvent, context):
           try:
             if pull_bgg_pic: waitForBggPic(data['bgg_id'])
           except Exception as e:
-              print(e)
+              print(f"WARNING: waitForBggPic failed: {e}")
           return {
             'statusCode': 201,
             'headers': {'Access-Control-Allow-Origin': origin},
             'body': json.dumps({'result': 'Event Modified'})
           }
-                   
+
         # Delete Event
         case 'DELETE':
           print('Delete Event')
@@ -886,12 +886,12 @@ def lambda_handler(apiEvent, context):
               )
               print(json.dumps(attrib_response, default=ddb_default))
             except Exception as e:
-              print(e)
+              print(f"ERROR: update_user_attributes failed for {data.get('user_id')}: {e}")
               print(json.dumps({
-                'request': data, 
-                'old_attributes': old_attributes, 
-                'new_attributes': new_attributes, 
-                'diff': diff, 
+                'request': data,
+                'old_attributes': old_attributes,
+                'new_attributes': new_attributes,
+                'diff': diff,
                 'attrib_changes': attrib_changes
               }, default=ddb_default))
               
@@ -1098,7 +1098,7 @@ def lambda_handler(apiEvent, context):
           data = apiEvent['queryStringParameters']
           user_id = data['user_id']
           if auth_sub != data['user_id']:
-            print(f"UNAUTHORIZED: user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
+            print(f"WARNING: Unauthorized — user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
             return unauthorized
           email_alert_preferences = getJsonS3(env.BACKEND_BUCKET, 'email_alert_preferences.json')
           user_alert_preferences = {}
@@ -1117,7 +1117,7 @@ def lambda_handler(apiEvent, context):
           data = json.loads(apiEvent['body'])
           user_id = data['user_id']
           if not authorize(apiEvent, auth_groups, ['admin']) and auth_sub != data['user_id']:
-            print(f"UNAUTHORIZED: user is not an admin and user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
+            print(f"WARNING: Unauthorized — user is not an admin and user_id '{data['user_id']}' does not match auth_sub '{auth_sub}'")
             return unauthorized
           
           if auth_sub == data['user_id']:
@@ -1320,7 +1320,7 @@ def key_exists(bucket, key):
       print(f"Key: '{key}' does not exist!")
       return False
     else:
-      print('Something else went wrong')
+      print(f"ERROR: Unexpected S3 error checking key '{key}': {e}")
       raise
 
 def authorize(apiEvent, membership:list, filter_groups:list, log_if_false=True ):
@@ -1382,7 +1382,7 @@ def reserved_event_scheduled_tasks_crud(action, params):
       client.create_schedule(**params)
     except Exception as err:
       if 'ConflictException' in str(err):
-        print('WARNING: Create failed with "ConflictException". Trying Update')
+        print('INFO: Create failed with "ConflictException". Trying Update')
         action='update'
         client.update_schedule(**params)
       else: raise
@@ -1391,7 +1391,7 @@ def reserved_event_scheduled_tasks_crud(action, params):
       client.update_schedule(**params)
     except Exception as err:
       if 'ResourceNotFoundException' in str(err):
-        print('WARNING: Update failed with "ResourceNotFoundException". Trying Create')
+        print('INFO: Update failed with "ResourceNotFoundException". Trying Create')
         action='create'
         client.create_schedule(**params)
       else: raise
@@ -1484,7 +1484,7 @@ def process_bgg_image(bgg_id, pic_url=None, refresh_image=False):
       s3.delete_object(Bucket=env.S3_BUCKET, Key=key)
       print(f"Deleted existing image '{key}' for refresh")
     except Exception as e:
-      print(f"delete_object '{key}': {e}")
+      print(f"ERROR: delete_object '{key}' failed: {e}")
   if not key_exists(env.S3_BUCKET, key):
     pull_bgg_pic = True
 

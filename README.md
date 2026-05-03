@@ -127,6 +127,18 @@ aws ssm put-parameter \
 
 To rotate an existing token, add `--overwrite`.
 
+Ops alert email — global, not per-environment (used by CloudWatch Alarms SNS and OpsDigest Lambda):
+
+```
+aws ssm put-parameter \
+  --name "/cubesandcardboard/ops/alert-email" \
+  --value "your@email.com" \
+  --type String \
+  --region us-east-1
+```
+
+**After first prod deploy:** AWS sends a "Confirm subscription" email to the alert address for the SNS topic. Click the link before alarms can deliver.
+
 ### Post-deploy: Bootstrap DB and S3
 
 ```

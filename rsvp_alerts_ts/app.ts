@@ -67,7 +67,7 @@ async function getEvent(
   try {
     const { Item } = await ddb.send(getItemCommand);
     if (!Item) {
-      if (!suppressLog) console.warn(`Event ${event_id} not found`);
+      if (!suppressLog) console.log(`Event ${event_id} not found (possibly deleted — schedule will not recur)`);
       return undefined;
     }
 
@@ -435,6 +435,11 @@ export const lambdaHandler = async (lambdaEvent: APIGatewayProxyEvent): Promise<
       ...rsvp_all_promises,
       ...rsvp_all_debug_promises,
     ]);
+    sesAllSettled.forEach((result, i) => {
+      if (result.status === "rejected") {
+        console.error(`Failed to send RSVP alert email [${i}]:`, result.reason);
+      }
+    });
     console.log("%j", { sesAllSettled: sesAllSettled });
 
     return {
