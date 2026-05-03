@@ -80,7 +80,7 @@ def key_exists(s3, bucket, key):
             print(f"Key: '{key}' does not exist!")
             return False
         else:
-            print("Something else went wrong")
+            print(f"ERROR: Unexpected S3 error checking key '{key}': {e}")
             raise
 
 

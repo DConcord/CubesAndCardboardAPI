@@ -25,6 +25,7 @@ Parameters:
 Conditions:
   # isDev: !Equals [!Ref Mode, dev]
   isNotProd: !Not [!Equals [!Ref Mode, prod]]
+  IsProd: !Equals [!Ref Mode, prod]
 
 Mappings:
   EnvMap:
@@ -373,14 +374,14 @@ Resources:
             Method: OPTIONS
             Auth:
               Authorizer: NONE
-        
+
         # /gametutorial
         GetGameTutorials:
           Type: Api
           Properties:
             RestApiId: !Ref EventsApiGateway
             Path: /gametutorial
-            Method: GET 
+            Method: GET
             Auth:
               Authorizer: NONE
         GameTutorialsPut:
@@ -390,7 +391,7 @@ Resources:
             Path: /gametutorial
             Method: PUT
             Auth:
-              Authorizer: CognitoPasswordless     
+              Authorizer: CognitoPasswordless
         GameTutorialsDelete:
           Type: Api
           Properties:
@@ -398,11 +399,11 @@ Resources:
             Path: /gametutorial
             Method: DELETE
             Auth:
-              Authorizer: CognitoPasswordless       
+              Authorizer: CognitoPasswordless
         GameTutorialsOptions:
           Type: Api
           Properties:
-            RestApiId: !Ref EventsApiGateway  
+            RestApiId: !Ref EventsApiGateway
             Path: /gametutorial
             Method: OPTIONS
             Auth:
@@ -740,9 +741,9 @@ Resources:
             # BucketName: !FindInMap [EnvMap, !Ref Mode, CloudFrontS3Bucket]
             BucketName: !Sub "{{resolve:ssm:/cubesandcardboard/${Mode}/frontend-bucket}}"
         - Statement:
-          - Effect: Allow
-            Action: cloudfront:CreateInvalidation
-            Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
+            - Effect: Allow
+              Action: cloudfront:CreateInvalidation
+              Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/*"
         - SSMParameterReadPolicy:
             ParameterName: cubesandcardboard/bgg/api-token
 
@@ -767,6 +768,145 @@ Resources:
       Tags:
         - Key: Owner
           Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  OpsAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "OpsAlerts_${Mode}"
+      Subscription:
+        - Protocol: email
+          Endpoint: "{{resolve:ssm:/cubesandcardboard/ops/alert-email}}"
+      Tags:
+        - Key: Owner
+          Value: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
+
+  ManageEventsErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: manage_events_prod_errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ManageEventsFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsAlertsTopic
+      OKActions:
+        - !Ref OpsAlertsTopic
+
+  BggSearchErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: bgg_search_prod_errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BggSearchFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsAlertsTopic
+      OKActions:
+        - !Ref OpsAlertsTopic
+
+  RetrieveBGGImageErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: retrieve_bgg_image_prod_errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RetrieveBGGImageFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsAlertsTopic
+      OKActions:
+        - !Ref OpsAlertsTopic
+
+  RsvpAlertsErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: IsProd
+    Properties:
+      AlarmName: rsvp_alerts_prod_errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RsvpAlertsFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsAlertsTopic
+      OKActions:
+        - !Ref OpsAlertsTopic
+
+  OpsDigestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "OpsDigest_${Mode}"
+      CodeUri: ops_digest/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 60
+      Environment:
+        Variables:
+          MODE: !Ref Mode
+          ALERT_EMAIL_PARAM: /cubesandcardboard/ops/alert-email
+      Events:
+        DailySchedule:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub "ops_digest_schedule_${Mode}"
+            ScheduleExpression: "cron(0 12 * * ? *)"
+            ScheduleExpressionTimezone: America/Denver
+            Description: !Sub "Daily ops digest for ${Mode} — sends on error (any day) or all-clear (Friday)"
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: cubesandcardboard/ops/alert-email
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource:
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/cubesandcardboard.net"
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/dissonantconcord.com"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:StartQuery
+                - logs:GetQueryResults
+                - logs:DescribeLogGroups
+              Resource: "*"
+      Tags:
+        Owner: !FindInMap [EnvMap, !Ref Mode, OwnerTag]
 
 Outputs:
   EventsApiGateway:
